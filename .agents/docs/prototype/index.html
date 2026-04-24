@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>狼人杀 - UI原型</title>
+<!--
+================================================================================
+  项目说明 (Project Overview)
+================================================================================
+  游戏名称: 狼人杀 - 本地联机版
+  技术栈: React + TypeScript + WebSocket
+  架构: 客户端-服务器模式 (Client-Server)
+  
+  客户端结构:
+    client/
+    ├── src/
+    │   ├── pages/              # 页面组件 (每个页面对应一个游戏阶段)
+    │   │   ├── join-page.tsx
+    │   │   ├── lobby-page.tsx
+    │   │   ├── role-page.tsx
+    │   │   ├── night/          # 夜晚阶段页面
+    │   │   │   ├── night-wait-page.tsx
+    │   │   │   ├── wolf-action-page.tsx
+    │   │   │   ├── seer-action-page.tsx
+    │   │   │   ├── witch-action-page.tsx
+    │   │   │   └── guard-action-page.tsx
+    │   │   ├── day/            # 白天阶段页面
+    │   │   │   ├── day-reveal-page.tsx
+    │   │   │   ├── hunter-skill-page.tsx
+    │   │   │   └── vote-page.tsx
+    │   │   ├── end-page.tsx
+    │   │   ├── disconnect-page.tsx
+    │   │   └── no-join-page.tsx
+    │   ├── components/         # 可复用组件
+    │   │   ├── player-list.tsx
+    │   │   ├── player-grid.tsx
+    │   │   ├── role-display.tsx
+    │   │   ├── help-overlay.tsx
+    │   │   └── ...
+    │   ├── hooks/              # 自定义 Hooks
+    │   │   ├── useWebSocket.ts
+    │   │   └── useGameState.ts
+    │   ├── types/              # TypeScript 类型定义
+    │   │   └── index.ts
+    │   └── utils/              # 工具函数
+    │       └── ...
+    └── ...
+  
+  通信方式:
+    - HTTP: 用于初始加入游戏 (POST /api/join)
+    - WebSocket: 用于游戏过程中的实时通信
+  
+  设计模式:
+    - 状态机驱动: 游戏状态由服务器控制，客户端根据状态渲染对应页面
+    - 组件化: 每个页面对应一个 React 组件，可复用组件提取为独立组件
+    - 事件驱动: WebSocket 事件触发状态更新和页面跳转
+================================================================================
+-->
+<style>
+  /* ===== 全局样式 ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+  
+  /* ===== 页面容器 ===== */
+  /* 每个 .page 对应一个 React 页面组件 */
+  .page { display: none; max-width: 400px; margin: 0 auto; padding: 20px; min-height: 100vh; }
+  .page.active { display: block; }
+  
+  /* ===== 卡片组件 ===== */
+  /* 对应 React 中的 Card 组件，用于包裹内容区块 */
+  .card { background: #16213e; border-radius: 12px; padding: 16px; margin: 12px 0; }
+  
+  /* ===== 按钮组件 ===== */
+  /* 对应 React 中的 Button 组件，支持 primary/secondary/success 三种变体 */
+  .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; margin: 12px 0; }
+  .btn-primary { background: #e94560; color: #fff; }
+  .btn-secondary { background: #0f3460; color: #fff; }
+  .btn-success { background: #2ecc71; color: #fff; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  
+  /* ===== 输入框组件 ===== */
+  /* 对应 React 中的 Input 组件 */
+  .input { width: 100%; padding: 14px; border: 2px solid #0f3460; border-radius: 8px; background: #16213e; color: #fff; font-size: 16px; outline: none; }
+  .input:focus { border-color: #e94560; }
+  
+  /* ===== 玩家列表项 ===== */
+  /* 对应 player-list 组件中的单个 player-item */
+  .player-list { list-style: none; }
+  .player-item { padding: 10px; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+  .player-item:last-child { border-bottom: none; }
+  
+  /* ===== 徽章组件 ===== */
+  /* 用于显示玩家状态标签 (主机/死亡/存活等) */
+  .badge { background: #e94560; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+  .badge-host { background: #f39c12; }
+  .badge-dead { background: #666; }
+  
+  /* ===== 角色卡片 ===== */
+  /* 对应 role-display 组件，用于展示玩家角色信息 */
+  .role-card { text-align: center; padding: 30px 16px; }
+  .role-icon { font-size: 48px; margin-bottom: 12px; }
+  .role-name { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+  .role-desc { color: #aaa; font-size: 14px; }
+  
+  /* ===== 玩家选择网格 ===== */
+  /* 对应 player-grid 组件，用于夜间操作和投票时选择目标 */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0; }
+  .grid-item { background: #0f3460; border-radius: 8px; padding: 12px; text-align: center; cursor: pointer; border: 2px solid transparent; }
+  .grid-item:hover { border-color: #e94560; }
+  .grid-item.selected { border-color: #e94560; background: #1a1a4e; }
+  .grid-item.disabled { opacity: 0.4; cursor: not-allowed; }
+  .grid-item .name { font-weight: 600; margin-bottom: 4px; }
+  .grid-item .status { font-size: 12px; color: #2ecc71; }
+  .grid-item .status.dead { color: #e94560; }
+  
+  /* ===== 工具类 ===== */
+  .section-title { font-size: 18px; font-weight: 600; margin: 16px 0 8px; }
+  .text-center { text-align: center; }
+  .text-muted { color: #aaa; }
+  .text-sm { font-size: 14px; }
+  .mt-2 { margin-top: 8px; }
+  .mt-4 { margin-top: 16px; }
+  .mb-2 { margin-bottom: 8px; }
+  .divider { border-top: 1px solid #0f3460; margin: 16px 0; }
+  
+  /* ===== 单选框组 ===== */
+  /* 用于女巫操作选择等场景 */
+  .radio-group { margin: 12px 0; }
+  .radio-item { display: flex; align-items: center; padding: 8px 0; cursor: pointer; }
+  .radio-item input { margin-right: 10px; }
+  
+  /* ===== 进度条 ===== */
+  /* 对应 VoteProgress 组件，显示投票进度 */
+  .progress { background: #0f3460; border-radius: 4px; height: 8px; overflow: hidden; margin: 8px 0; }
+  .progress-bar { background: #e94560; height: 100%; width: 43%; }
+  
+  /* ===== 倒计时 ===== */
+  /* 用于断线重连倒计时显示 */
+  .countdown { font-size: 32px; font-weight: 700; color: #e94560; text-align: center; margin: 16px 0; }
+  
+  /* ===== 底部导航 (仅原型演示用) ===== */
+  /* 实际项目中不需要，通过 WebSocket 事件和路由控制页面跳转 */
+  .page-nav { position: fixed; bottom: 0; left: 0; right: 0; background: #0f3460; padding: 10px; display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; z-index: 100; }
+  .page-nav button { padding: 6px 10px; border: none; border-radius: 4px; background: #16213e; color: #fff; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .page-nav button.active { background: #e94560; }
+  
+  /* ===== 结果列表 ===== */
+  /* 用于游戏结束时显示所有玩家身份 */
+  .result-list { list-style: none; }
+  .result-item { padding: 8px 0; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; }
+  .result-item:last-child { border-bottom: none; }
+  
+  /* ===== 帮助弹窗 ===== */
+  /* 对应 help-overlay 组件，全局可用 */
+  .help-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 200; overflow-y: auto; }
+  .help-overlay.show { display: block; }
+  .help-panel { max-width: 400px; margin: 40px auto; background: #16213e; border-radius: 12px; padding: 20px; }
+  .help-section { margin: 12px 0; }
+  .help-section h4 { color: #e94560; margin-bottom: 6px; }
+  .help-section p { font-size: 13px; color: #aaa; line-height: 1.6; }
+  
+  /* ===== 女巫药水显示 ===== */
+  /* 对应 potion-display 组件 */
+  .witch-potion { display: flex; gap: 12px; margin: 12px 0; }
+  .potion { flex: 1; background: #0f3460; padding: 10px; border-radius: 8px; text-align: center; }
+  .potion .icon { font-size: 24px; }
+  .potion .status { font-size: 12px; color: #2ecc71; margin-top: 4px; }
+  .potion .status.used { color: #e94560; }
+  
+  /* ===== 猎人面板 ===== */
+  /* 猎人死亡时显示的特殊提示面板 */
+  .hunter-panel { background: #e94560; border-radius: 8px; padding: 12px; margin: 12px 0; }
+  .hunter-panel h4 { color: #fff; margin-bottom: 8px; }
+  
+  /* ===== 页面底部留白 ===== */
+  /* 为底部导航留出空间 */
+  body { padding-bottom: 120px; }
+  
+  /* ===== 页面头部 ===== */
+  /* 所有页面通用的 Header 组件，包含标题和帮助按钮 */
+  .header { display: flex; justify-content: space-between; align-items: center; }
+  .header h2 { margin: 0; }
+  .help-btn { background: #0f3460; border: none; color: #fff; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .help-btn:hover { background: #1a3a6e; }
+  
+  /* ===== modal 组件 ===== */
+  /* 对应 React 中的 modal 组件，用于轻量级交互提示 */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 300; justify-content: center; align-items: center; }
+  .modal-overlay.show { display: flex; }
+  .modal-content { background: #16213e; border-radius: 12px; padding: 24px; max-width: 320px; width: 90%; text-align: center; }
+  .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+  .modal-body { font-size: 14px; color: #aaa; margin-bottom: 20px; line-height: 1.6; }
+  .modal-footer { margin-top: 16px; }
+  
+  /* ===== 投票结果列表 ===== */
+  .vote-result-list { list-style: none; text-align: left; margin: 12px 0; }
+  .vote-result-item { padding: 6px 0; display: flex; justify-content: space-between; border-bottom: 1px solid #0f3460; }
+  .vote-result-item:last-child { border-bottom: none; }
+  .vote-result-item .name { font-weight: 600; }
+  .vote-result-item .count { color: #e94560; }
+  
+  /* ===== 死亡记录列表 ===== */
+  .death-record { text-align: left; margin: 8px 0; padding: 8px; background: #0f3460; border-radius: 6px; }
+  .death-record .name { font-weight: 600; }
+  .death-record .reason { font-size: 12px; color: #aaa; }
+  
+  /* ===== 角色分配列表 (主机可见) ===== */
+  .role-assign-list { list-style: none; text-align: left; margin: 12px 0; }
+  .role-assign-item { padding: 6px 0; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; }
+  .role-assign-item:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<!--
+================================================================================
+  页面 1: 加入页面 (join-page)
+================================================================================
+  组件路径: client/src/pages/join-page.tsx
+  依赖组件: 无
+  
+  State:
+    - nickname: string          // 用户输入的昵称
+    - isJoining: boolean        // 是否正在加入中 (loading 状态)
+    - error: string | null      // 错误信息
+  
+  WebSocket/HTTP 事件:
+    - 提交: POST /api/join { nickname }
+    - 成功: 进入 lobby-page
+    - 失败: 显示错误信息 (昵称已存在/游戏进行中等)
+  
+  业务逻辑:
+    - 如果游戏已开始，返回 "游戏进行中" 状态，跳转到 no-join-page
+    - 昵称不能为空，长度 1-10
+    - 同一昵称不能重复加入
+================================================================================
+-->
+<div id="page-join" class="page active">
+  <div style="height: 30vh;"></div>
+  <h1 class="text-center" style="font-size: 28px; margin-bottom: 8px;">🐺 狼人杀 🐺</h1>
+  <p class="text-center text-muted mb-2">本地联机版</p>
+  <div class="card">
+    <input type="text" class="input" placeholder="输入你的昵称" value="张三" maxlength="10">
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-lobby')">加 入 游 戏</button>
+  <p class="text-center text-muted text-sm mt-4">服务器: 192.168.43.1:3000</p>
+</div>
+
+<!--
+================================================================================
+  页面 2: 等待大厅 (lobby-page)
+================================================================================
+  组件路径: client/src/pages/lobby-page.tsx
+  依赖组件: 
+    - player-list (玩家列表)
+    - role-config (角色配置展示)
+    - help-overlay (帮助弹窗)
+  
+  State:
+    - players: Player[]         // 当前玩家列表
+    - roleConfig: RoleConfig    // 角色配置
+    - isHost: boolean           // 当前用户是否是主机
+    - showHelp: boolean         // 是否显示帮助弹窗
+  
+  WebSocket 事件:
+    - 接收: 'player:joined'     // 新玩家加入，更新 players
+    - 接收: 'player:left'       // 玩家离开，更新 players
+    - 接收: 'config:updated'    // 主机更新了配置，更新 roleConfig
+    - 发送: 'game:start'        // 主机点击开始游戏 (仅主机可发)
+  
+  业务逻辑:
+    - 只有主机能看到 "开始游戏" 按钮
+    - 游戏开始后，所有玩家跳转到 role-page
+    - 玩家列表实时更新
+    - 角色配置根据当前人数自动推荐
+================================================================================
+-->
+<div id="page-lobby" class="page">
+  <!-- Header: 所有页面通用，可提取为 Header 组件 -->
+  <div class="header">
+    <h2>🐺 狼人杀</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <!-- player-list 组件 -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">当前玩家 (3)</h3>
+    <ul class="player-list">
+      <li class="player-item"><span>👤 张三</span><span class="badge badge-host">主机</span></li>
+      <li class="player-item"><span>👤 李四</span><span></span></li>
+      <li class="player-item"><span>👤 王五</span><span></span></li>
+    </ul>
+  </div>
+
+  <!-- role-config 组件 -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">角色配置: 7人局</h3>
+    <p class="text-sm text-muted">狼人x2 平民x3 预言家x1 女巫x1 猎人x1</p>
+  </div>
+
+  <!-- 仅主机可见 -->
+  <button class="btn btn-primary" onclick="showPage('page-role')">开 始 游 戏 (主机)</button>
+</div>
+
+<!--
+================================================================================
+  页面 3: 角色查看 (role-page)
+================================================================================
+  组件路径: client/src/pages/role-page.tsx
+  依赖组件:
+    - role-display (角色展示卡片)
+  
+  State:
+    - role: Role                // 当前玩家的角色信息
+    - hasConfirmed: boolean     // 是否已确认知道角色
+  
+  WebSocket 事件:
+    - 接收: 'role:assigned'     // 服务器分配角色，包含 role 信息
+    - 发送: 'role:confirmed'    // 玩家确认已查看 (可选，当前设计无需等待)
+  
+  业务逻辑:
+    - 角色信息仅自己可见，通过 WebSocket 私有消息发送
+    - 点击 "我已知道" 后进入夜晚等待页面
+    - 无需等待所有玩家确认，主机确认后直接进入游戏
+    - 此页面只展示一次，返回时不重复显示
+================================================================================
+-->
+<div id="page-role" class="page">
+  <div class="header">
+    <h2>🎭 角色分配</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center text-muted">你的身份是：</p>
+  
+  <!-- role-display 组件 -->
+  <div class="card role-card">
+    <div class="role-icon">👁️</div>
+    <div class="role-name">预 言 家</div>
+    <div class="role-desc">每晚可以查验一名玩家的身份（好人或狼人）</div>
+  </div>
+  
+  <p class="text-center text-muted text-sm mt-4">请牢记你的身份，不要泄露</p>
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">我 已 知 道</button>
+</div>
+
+<!--
+================================================================================
+  页面 4: 夜晚等待 (night-wait-page)
+================================================================================
+  组件路径: client/src/pages/night/night-wait-page.tsx
+  依赖组件:
+    - role-display (角色展示，简化版)
+    - phase-indicator (阶段提示)
+  
+  State:
+    - currentPhase: string      // 当前夜晚子阶段 (狼人/预言家/女巫/守卫)
+    - myRole: Role              // 我的角色
+  
+  WebSocket 事件:
+    - 接收: 'night:phase'       // 当前夜晚阶段更新
+    - 接收: 'night:action'      // 轮到我行动，跳转到对应操作页面
+  
+  业务逻辑:
+    - 非当前行动的玩家显示此页面
+    - 显示当前进行到哪个阶段 (如 "狼人正在讨论...")
+    - 轮到自己时，服务器推送 'night:action'，跳转到对应操作页面
+    - 行动完成后回到此页面等待下一阶段
+================================================================================
+-->
+<div id="page-night-wait" class="page">
+  <div class="header">
+    <h2>🌙 夜 晚</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <!-- phase-indicator 组件 -->
+  <div style="height: 20vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+    <p class="text-muted" style="font-size: 18px;">请耐心等待...</p>
+    <p class="text-muted text-sm mt-2">狼人正在讨论...</p>
+  </div>
+  
+  <!-- role-display 组件 (简化版) -->
+  <div class="card">
+    <h3 class="text-center text-sm text-muted">你的角色</h3>
+    <div class="role-card" style="padding: 16px;">
+      <div class="role-icon" style="font-size: 32px;">👁️</div>
+      <div class="role-name" style="font-size: 18px;">预 言 家</div>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  页面 5: 狼人操作 (wolf-action-page)
+================================================================================
+  组件路径: client/src/pages/night/wolf-action-page.tsx
+  依赖组件:
+    - player-grid (玩家选择网格)
+  
+  State:
+    - selectedTarget: string | null  // 选中的刀人目标
+    - wolfPartners: string[]         // 狼人同伴列表
+    - isSubmitting: boolean          // 是否正在提交
+  
+  WebSocket 事件:
+    - 接收: 'night:wolf-start'  // 狼人阶段开始，包含 wolfPartners
+    - 发送: 'night:wolf-kill'   // 提交刀人目标 { targetId }
+    - 接收: 'night:wolf-done'   // 所有狼人已提交，进入下一阶段
+  
+  业务逻辑:
+    - 只有狼人角色能看到此页面
+    - 显示狼人同伴是谁 (线下口头讨论，前端仅展示)
+    - 只能选择存活的玩家
+    - 所有狼人达成一致后各自提交 (或多数票决定)
+    - 提交后回到 night-wait-page
+================================================================================
+-->
+<div id="page-wolf" class="page">
+  <div class="header">
+    <h2>🌙 夜 晚</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center" style="font-size: 18px;">狼人请睁眼</p>
+  <p class="text-center text-muted text-sm mt-2">你的狼人同伴：李四</p>
+  <p class="text-center text-muted mt-4">请选择今晚要刀的人：</p>
+  
+  <!-- player-grid 组件 -->
+  <div class="grid">
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">孙七</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">周八</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">吴九</div><div class="status">存活</div></div>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">确 定 刀 人</button>
+</div>
+
+<!--
+================================================================================
+  页面 6: 预言家操作 (seer-action-page)
+================================================================================
+  组件路径: client/src/pages/night/seer-action-page.tsx
+  依赖组件:
+    - player-grid (玩家选择网格)
+  
+  State:
+    - selectedTarget: string | null  // 选中的查验目标
+    - checkResult: { isWolf: boolean } | null  // 查验结果
+  
+  WebSocket 事件:
+    - 接收: 'night:seer-start'  // 预言家阶段开始
+    - 发送: 'night:seer-check'  // 提交查验目标 { targetId }
+    - 接收: 'night:seer-result' // 返回查验结果 { targetId, isWolf }
+  
+  业务逻辑:
+    - 只有预言家角色能看到此页面
+    - 只能选择存活的玩家
+    - 查验结果仅自己可见
+    - 提交后显示结果，确认后回到 night-wait-page
+================================================================================
+-->
+<div id="page-seer" class="page">
+  <div class="header">
+    <h2>🌙 夜 晚</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center" style="font-size: 18px;">预言家，请选择要查验的玩家</p>
+  
+  <!-- player-grid 组件 -->
+  <div class="grid">
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">李四</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">孙七</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">周八</div><div class="status">存活</div></div>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">确 定 查 验</button>
+</div>
+
+<!--
+================================================================================
+  页面 7: 女巫操作 (witch-action-page)
+================================================================================
+  组件路径: client/src/pages/night/witch-action-page.tsx
+  依赖组件:
+    - potion-display (药水状态展示)
+    - player-grid (玩家选择网格)
+  
+  State:
+    - healAvailable: boolean    // 解药是否可用
+    - poisonAvailable: boolean  // 毒药是否可用
+    - selectedAction: 'heal' | 'poison' | 'none'  // 选择的操作
+    - poisonTarget: string | null  // 毒药目标
+  
+  WebSocket 事件:
+    - 接收: 'night:witch-start' // 女巫阶段开始，包含 { nightDeath, healAvailable, poisonAvailable }
+    - 发送: 'night:witch-action' // 提交操作 { action: 'heal' | 'poison' | 'none', targetId? }
+  
+  业务逻辑:
+    - 只有女巫角色能看到此页面
+    - 显示昨夜狼刀目标
+    - 首夜被刀可自救，非首夜被刀不能自救
+    - 同一夜只能使用一种药
+    - 解药和毒药分别显示是否可用
+    - 选择毒药后显示玩家列表选择目标
+================================================================================
+-->
+<div id="page-witch" class="page">
+  <div class="header">
+    <h2>🌙 夜 晚</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center" style="font-size: 18px;">女巫请睁眼</p>
+  <p class="text-center text-muted mt-2">昨夜死亡：李四（狼刀）</p>
+  
+  <!-- potion-display 组件 -->
+  <div class="witch-potion">
+    <div class="potion"><div class="icon">💊</div><div>解药</div><div class="status">可用</div></div>
+    <div class="potion"><div class="icon">☠️</div><div>毒药</div><div class="status">可用</div></div>
+  </div>
+
+  <p class="text-muted text-sm mt-4">请选择操作：</p>
+  <div class="radio-group">
+    <label class="radio-item"><input type="radio" name="witch" checked> 使用解药救李四</label>
+    <label class="radio-item"><input type="radio" name="witch"> 使用毒药</label>
+    <label class="radio-item"><input type="radio" name="witch"> 不使用药水</label>
+  </div>
+
+  <!-- 选择毒药时显示 -->
+  <div id="witch-target" style="display: none;">
+    <p class="text-muted text-sm mt-2">选择毒药目标：</p>
+    <div class="grid">
+      <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">存活</div></div>
+      <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">存活</div></div>
+      <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">存活</div></div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">确 定</button>
+</div>
+
+<!--
+================================================================================
+  页面 8: 守卫操作 (guard-action-page)
+================================================================================
+  组件路径: client/src/pages/night/guard-action-page.tsx
+  依赖组件:
+    - player-grid (玩家选择网格)
+  
+  State:
+    - selectedTarget: string | null  // 选中的守护目标
+    - lastGuardTarget: string | null // 昨晚守护的目标 (不可选)
+  
+  WebSocket 事件:
+    - 接收: 'night:guard-start' // 守卫阶段开始，包含 { lastGuardTarget }
+    - 发送: 'night:guard-action' // 提交守护目标 { targetId }
+  
+  业务逻辑:
+    - 只有守卫角色能看到此页面
+    - 不能连续两晚守护同一人 (包括自己)
+    - 昨晚守护的玩家显示为不可选状态
+    - 可以守护自己
+================================================================================
+-->
+<div id="page-guard" class="page">
+  <div class="header">
+    <h2>🌙 夜 晚</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center" style="font-size: 18px;">守卫请睁眼</p>
+  <p class="text-center text-muted mt-2">请选择今晚要守护的人</p>
+  <p class="text-center text-muted text-sm">昨晚守护了李四，今晚不能守护同一人</p>
+  
+  <!-- player-grid 组件 -->
+  <div class="grid">
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">存活</div></div>
+    <div class="grid-item disabled"><div class="name">李四</div><div class="status">昨晚已守</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">孙七</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">周八</div><div class="status">存活</div></div>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">确 定 守 护</button>
+</div>
+
+<!--
+================================================================================
+  页面 9: 白天死亡通报 (day-reveal-page)
+================================================================================
+  组件路径: client/src/pages/day/day-reveal-page.tsx
+  依赖组件:
+    - death-list (死亡列表)
+  
+  State:
+    - deaths: DeathInfo[]       // 昨夜死亡列表
+    - dayNumber: number         // 当前第几天
+  
+  WebSocket 事件:
+    - 接收: 'day:death-reveal'  // 死亡通报，包含 { deaths, dayNumber }
+  
+  业务逻辑:
+    - 宣布昨夜所有死亡玩家及死因
+    - 死因包括: 狼人刀杀、女巫毒杀
+    - 如果平安夜，显示 "昨夜平安夜"
+    - 如果猎人死于狼刀，接下来进入 hunter-skill-page
+    - 否则进入遗言阶段 (线下进行)
+================================================================================
+-->
+<div id="page-day-reveal" class="page">
+  <div class="header">
+    <h2>☀️ 白 天</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <p class="text-center text-muted">第 2 天</p>
+  <div class="divider"></div>
+  
+  <!-- DeathList 组件 -->
+  <div class="card">
+    <h3 class="section-title">昨夜死亡：</h3>
+    <div style="padding: 16px; text-align: center;">
+      <span style="font-size: 32px;">💀</span>
+      <p style="font-size: 18px; margin-top: 8px;">李四（狼人刀杀）</p>
+    </div>
+  </div>
+  <p class="text-center text-muted mt-4">请死亡玩家准备遗言</p>
+  <button class="btn btn-primary" onclick="showPage('page-vote')">我 知 道 了</button>
+</div>
+
+<!--
+================================================================================
+  页面 10: 猎人开枪 (hunter-skill-page)
+================================================================================
+  组件路径: client/src/pages/day/hunter-skill-page.tsx
+  依赖组件:
+    - player-grid (玩家选择网格)
+  
+  State:
+    - selectedTarget: string | null  // 选中的开枪目标
+    - deathReason: string            // 猎人的死因 (狼刀/投票)
+  
+  WebSocket 事件:
+    - 接收: 'hunter:skill-start' // 猎人技能触发，包含 { deathReason }
+    - 发送: 'hunter:shoot'       // 提交开枪目标 { targetId }
+    - 接收: 'hunter:done'        // 猎人技能完成
+  
+  业务逻辑:
+    - 只有猎人角色能看到此页面
+    - 触发条件: 死于狼刀 或 死于投票放逐
+    - 死于女巫毒杀时不触发
+    - 被猎人带走的玩家立即死亡，不可触发自身技能，无遗言
+    - 开枪后服务器检测胜利条件
+================================================================================
+-->
+<div id="page-hunter" class="page">
+  <div class="header">
+    <h2>🔫 猎 人</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <!-- hunter-panel 组件 -->
+  <div class="hunter-panel">
+    <h4>你被狼人刀杀，可以开枪带走一人</h4>
+  </div>
+  
+  <p class="text-center text-muted mt-4">请选择开枪目标：</p>
+  
+  <!-- player-grid 组件 -->
+  <div class="grid">
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">存活</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">孙七</div><div class="status">存活</div></div>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-day-reveal')">开 枪</button>
+  <button class="btn btn-secondary" onclick="showPage('page-day-reveal')">不 开 枪</button>
+</div>
+
+<!--
+================================================================================
+  页面 11: 白天投票 (vote-page)
+================================================================================
+  组件路径: client/src/pages/day/vote-page.tsx
+  依赖组件:
+    - player-grid (玩家选择网格)
+    - vote-progress (投票进度)
+  
+  State:
+    - selectedTarget: string | null  // 选中的投票目标
+    - voteProgress: { current, total }  // 投票进度
+    - isRevote: boolean              // 是否是平票重投
+    - pkPlayers: string[]            // 平票候选列表 (重投时)
+  
+  WebSocket 事件:
+    - 接收: 'day:vote-start'    // 投票开始，包含 { alivePlayers, isRevote?, pkPlayers? }
+    - 发送: 'day:vote'          // 提交投票 { targetId | 'abstain' }
+    - 接收: 'day:vote-update'   // 投票进度更新 { current, total }
+    - 接收: 'day:vote-result'   // 投票结果 { votes, exileId?, tie?, pkPlayers? }
+  
+  业务逻辑:
+    - 所有存活玩家必须投票 (白痴除外)
+    - 可以弃票，弃票不计入任何人票数
+    - 票数最多者被放逐
+    - 平票时进入重投，只对平票候选投票
+    - 重投仍平票则平安夜
+    - 被放逐的是猎人时，触发猎人技能
+================================================================================
+-->
+<div id="page-vote" class="page">
+  <div class="header">
+    <h2>☀️ 白 天</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  <p class="text-center" style="font-size: 18px;">请投票选出要放逐的玩家</p>
+  
+  <!-- player-grid 组件 -->
+  <div class="grid">
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">张三</div><div class="status">○</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">王五</div><div class="status">○</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">赵六</div><div class="status">○</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">孙七</div><div class="status">○</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">周八</div><div class="status">○</div></div>
+    <div class="grid-item" onclick="selectGrid(this)"><div class="name">吴九</div><div class="status">○</div></div>
+  </div>
+  <div class="radio-group">
+    <label class="radio-item"><input type="radio" name="vote"> 弃票</label>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-end')">投 票</button>
+  
+  <!-- vote-progress 组件 -->
+  <div class="progress"><div class="progress-bar"></div></div>
+  <p class="text-center text-muted text-sm">投票进度: 3/7</p>
+</div>
+
+<!--
+================================================================================
+  页面 12: 游戏结束 (end-page)
+================================================================================
+  组件路径: client/src/pages/end-page.tsx
+  依赖组件:
+    - result-list (角色公布列表)
+  
+  State:
+    - winner: 'good' | 'wolf'   // 胜利阵营
+    - allRoles: PlayerRole[]    // 所有玩家的角色信息
+  
+  WebSocket 事件:
+    - 接收: 'game:end'          // 游戏结束，包含 { winner, allRoles }
+    - 发送: 'game:restart'      // 主机点击重新开始
+  
+  业务逻辑:
+    - 显示胜利阵营
+    - 显示所有玩家的真实身份
+    - 主机可点击 "再来一局" 重新开始
+    - 非主机玩家显示 "等待主机重新开始"
+================================================================================
+-->
+<div id="page-end" class="page">
+  <div class="header">
+    <h2>🎉 游戏结束</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <!-- WinnerDisplay 组件 -->
+  <div class="card role-card">
+    <div class="role-icon">🏆</div>
+    <div class="role-name">好人阵营胜利！</div>
+  </div>
+  
+  <!-- ResultList 组件 -->
+  <div class="card">
+    <h3 class="section-title">角色公布</h3>
+    <div class="divider"></div>
+    <ul class="result-list">
+      <li class="result-item"><span>张三</span><span>🐺 狼人</span></li>
+      <li class="result-item"><span>李四</span><span>🐺 狼人</span></li>
+      <li class="result-item"><span>王五</span><span>👁️ 预言家</span></li>
+      <li class="result-item"><span>赵六</span><span>🧪 女巫</span></li>
+      <li class="result-item"><span>孙七</span><span>🔫 猎人</span></li>
+      <li class="result-item"><span>周八</span><span>🛡️ 守卫</span></li>
+      <li class="result-item"><span>吴九</span><span>👤 平民</span></li>
+    </ul>
+  </div>
+  <button class="btn btn-success" onclick="showPage('page-join')">再 来 一 局</button>
+</div>
+
+<!--
+================================================================================
+  页面 13: 断线重连 (DisconnectPage)
+================================================================================
+  组件路径: client/src/pages/DisconnectPage.tsx
+  依赖组件:
+    - Countdown (倒计时)
+  
+  State:
+    - countdown: number         // 剩余秒数 (120秒)
+    - isReconnecting: boolean   // 是否正在重连
+    - reconnectSuccess: boolean // 重连是否成功
+  
+  WebSocket 事件:
+    - 自动: WebSocket 断开时触发
+    - 自动: 尝试重连 (浏览器 WebSocket 重连逻辑)
+    - 成功: 重连成功后恢复当前页面状态
+    - 超时: 倒计时结束，玩家死亡
+  
+  业务逻辑:
+    - 等待阶段断线: 不计时，随时可重连
+    - 游戏中断线: 开始 2 分钟倒计时
+    - 倒计时结束未重连: 玩家死亡，公开身份
+    - 重连成功: 恢复当前游戏阶段
+    - 点击 "立即重连" 手动触发重连
+================================================================================
+-->
+<div id="page-disconnect" class="page">
+  <div style="height: 20vh;"></div>
+  <h2 class="text-center">⚠️ 连接中断</h2>
+  <div class="divider"></div>
+  <div style="height: 15vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+    <p class="text-muted" style="font-size: 18px;">你已断开连接</p>
+    <p class="text-muted text-sm mt-2">正在尝试重新连接...</p>
+    <div class="countdown">01:45</div>
+    <p class="text-muted text-sm">如果倒计时结束仍未重连，<br>你将被判定为死亡</p>
+  </div>
+  <button class="btn btn-primary" onclick="showPage('page-lobby')">立 即 重 连</button>
+</div>
+
+<!--
+================================================================================
+  页面 14: 游戏进行中无法加入 (NoJoinPage)
+================================================================================
+  组件路径: client/src/pages/NoJoinPage.tsx
+  依赖组件: 无
+  
+  State: 无
+  
+  业务逻辑:
+    - 游戏开始后，新访问者看到此页面
+    - 不显示加入按钮
+    - 提示等待本局结束或主机重新开始
+================================================================================
+-->
+<div id="page-nojoin" class="page">
+  <div style="height: 30vh;"></div>
+  <h1 class="text-center" style="font-size: 28px; margin-bottom: 8px;">🐺 狼人杀 🐺</h1>
+  <div class="divider"></div>
+  <div style="height: 20vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+    <p style="font-size: 24px; font-weight: 600;">游戏进行中</p>
+    <p class="text-muted text-sm mt-4">当前局已开始，无法加入</p>
+    <p class="text-muted text-sm mt-2">请等待本局结束后</p>
+    <p class="text-muted text-sm">或主机重新开始</p>
+  </div>
+</div>
+
+<!--
+================================================================================
+  页面 15: 主机控制面板 (HostPanelPage)
+================================================================================
+  组件路径: client/src/pages/HostPanelPage.tsx
+  依赖组件:
+    - RoleConfigEditor (角色配置编辑器)
+    - PlayerList (玩家列表)
+    - RoleAssignList (角色分配列表，仅主机可见)
+  
+  State:
+    - phase: 'waiting' | 'role-assigned' | 'playing'  // 当前阶段
+    - roleConfig: RoleConfig    // 角色配置
+    - players: Player[]         // 玩家列表
+    - allRoles: PlayerRole[]    // 角色分配结果 (仅主机可见)
+    - dayNumber: number         // 当前天数
+    - currentPhase: string      // 当前游戏子阶段
+  
+  WebSocket 事件:
+    - 接收: 'player:joined'     // 新玩家加入
+    - 接收: 'player:left'       // 玩家离开
+    - 发送: 'host:config-update' // 更新角色配置
+    - 发送: 'host:start-game'   // 开始游戏
+    - 发送: 'host:start-night'  // 进入夜晚 (角色分配后)
+    - 发送: 'host:restart'      // 重新开始
+  
+  业务逻辑:
+    - 只有主机能看到此页面
+    - 等待阶段: 显示玩家列表 + 角色配置编辑器
+    - 角色分配后: 显示角色分配结果 (上帝视角) + "进入夜晚" 按钮
+    - 游戏进行中: 显示当前状态 + 存活/死亡统计 + "重新开始" 按钮
+    - 角色总数必须等于玩家数，否则"开始游戏"按钮禁用
+================================================================================
+-->
+<div id="page-host" class="page">
+  <div class="header">
+    <h2>🐺 主机控制面板</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <!-- 等待阶段 -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">状态: 等待开始</h3>
+    <p class="text-sm text-muted">玩家数: 7</p>
+  </div>
+  
+  <!-- 角色配置编辑器 -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">角色配置</h3>
+    <p class="text-sm text-muted">预设: 7人局</p>
+    <div class="divider"></div>
+    <p>狼人: 2</p>
+    <p>平民: 3</p>
+    <p>预言家: 1</p>
+    <p>女巫: 1</p>
+    <p>猎人: 0</p>
+    <p>守卫: 0</p>
+    <p>白痴: 0</p>
+  </div>
+  
+  <!-- 玩家列表 -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">当前玩家</h3>
+    <ul class="player-list">
+      <li class="player-item"><span>👤 张三</span><span class="badge badge-host">主机</span></li>
+      <li class="player-item"><span>👤 李四</span><span></span></li>
+      <li class="player-item"><span>👤 王五</span><span></span></li>
+    </ul>
+  </div>
+  
+  <button class="btn btn-primary" onclick="showPage('page-host-role')">开 始 游 戏</button>
+  
+  <div class="divider"></div>
+  
+  <!-- 游戏进行中 (切换显示) -->
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">状态: 🌙 夜晚 - 狼人刀人</h3>
+    <p class="text-sm text-muted">第 2 天</p>
+    <div class="divider"></div>
+    <p>存活玩家: 6</p>
+    <p>死亡玩家: 1</p>
+    <div class="death-record">
+      <span class="name">💀 李四</span>
+      <span class="reason">（狼人刀杀）</span>
+    </div>
+  </div>
+  
+  <button class="btn btn-secondary" onclick="showPage('page-join')">重 新 开 始</button>
+</div>
+
+<!--
+================================================================================
+  页面 16: 主机角色分配页面 (HostRoleAssignPage)
+================================================================================
+  组件路径: client/src/pages/HostRoleAssignPage.tsx
+  依赖组件:
+    - RoleAssignList (角色分配列表)
+  
+  State:
+    - allRoles: PlayerRole[]    // 所有玩家的角色分配
+  
+  WebSocket 事件:
+    - 接收: 'role:assigned-all' // 角色分配完成，包含所有玩家角色
+    - 发送: 'host:start-night'  // 进入夜晚
+  
+  业务逻辑:
+    - 只有主机能看到此页面
+    - 显示所有玩家的角色分配 (上帝视角)
+    - 主机确认后进入夜晚，无需等待所有玩家查看角色
+================================================================================
+-->
+<div id="page-host-role" class="page">
+  <div class="header">
+    <h2>🐺 主机控制面板</h2>
+    <button class="help-btn" onclick="toggleHelp()">❓帮助</button>
+  </div>
+  <div class="divider"></div>
+  
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">状态: 🎭 角色已分配</h3>
+    <p class="text-sm text-muted">等待玩家查看角色...</p>
+  </div>
+  
+  <div class="card">
+    <h3 class="section-title" style="margin: 0 0 8px;">角色分配结果（仅主机可见）</h3>
+    <ul class="role-assign-list">
+      <li class="role-assign-item"><span>🐺 张三</span><span>狼人</span></li>
+      <li class="role-assign-item"><span>🐺 李四</span><span>狼人</span></li>
+      <li class="role-assign-item"><span>👁️ 王五</span><span>预言家</span></li>
+      <li class="role-assign-item"><span>🧪 赵六</span><span>女巫</span></li>
+      <li class="role-assign-item"><span>🔫 孙七</span><span>猎人</span></li>
+      <li class="role-assign-item"><span>👤 周八</span><span>平民</span></li>
+      <li class="role-assign-item"><span>👤 吴九</span><span>平民</span></li>
+    </ul>
+  </div>
+  
+  <button class="btn btn-primary" onclick="showPage('page-night-wait')">进 入 夜 晚</button>
+</div>
+
+<!--
+================================================================================
+  全局组件: 遗言提示 Modal (LastWordsModal)
+================================================================================
+  组件路径: client/src/components/modals/LastWordsModal.tsx
+  使用位置: DayRevealPage / HunterSkillPage 之后触发
+  
+  State:
+    - show: boolean             // 是否显示
+    - deadPlayers: Player[]     // 需要发表遗言的死亡玩家列表
+  
+  业务逻辑:
+    - 死亡通报后（猎人开枪后或无猎人开枪时）触发
+    - 提示当前需要发表遗言的死亡玩家
+    - 遗言是线下社交环节，系统仅做提示，不记录内容
+    - 死亡玩家线下发言后，点击"遗言结束"继续流程
+================================================================================
+-->
+<div id="modal-last-words" class="modal-overlay" onclick="closeModal('modal-last-words')">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-title">🎤 遗 言</div>
+    <div class="modal-body">
+      <p>请死亡玩家发表遗言</p>
+      <p style="margin-top: 8px; color: #e94560;">李四、王五</p>
+      <p class="text-sm">（点击名字查看身份）</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-last-words')">遗 言 结 束</button>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  全局组件: 白痴翻牌 Modal (IdiotRevealModal)
+================================================================================
+  组件路径: client/src/components/modals/IdiotRevealModal.tsx
+  使用位置: VoteResultModal 之后触发（若被放逐的是白痴）
+  
+  State:
+    - show: boolean             // 是否显示
+    - player: Player            // 翻牌的白痴玩家
+  
+  业务逻辑:
+    - 投票结果公布后，若被放逐的玩家是白痴时触发
+    - 显示白痴身份牌 + 翻牌提示
+    - 所有玩家点击"我知道了"后继续流程
+    - 白痴继续存活，但永久失去投票权
+================================================================================
+-->
+<div id="modal-idiot-reveal" class="modal-overlay" onclick="closeModal('modal-idiot-reveal')">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-title">🤪 白 痴 翻 牌</div>
+    <div class="modal-body">
+      <div class="card role-card" style="padding: 16px;">
+        <div class="role-icon" style="font-size: 32px;">🤪</div>
+        <div class="role-name" style="font-size: 18px;">白 痴</div>
+      </div>
+      <p style="margin-top: 12px;">张三已证明身份</p>
+      <p>继续存活但失去投票权</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-idiot-reveal')">我 知 道 了</button>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  全局组件: 投票结果 Modal (VoteResultModal)
+================================================================================
+  组件路径: client/src/components/modals/VoteResultModal.tsx
+  使用位置: VotePage 投票完成后触发
+  
+  State:
+    - show: boolean             // 是否显示
+    - votes: Record<string, number>  // 各玩家得票数
+    - exiledPlayer: string | null    // 被放逐的玩家
+    - isTie: boolean            // 是否平票
+  
+  业务逻辑:
+    - 所有玩家投票完成后触发
+    - 显示各玩家得票数 + 被放逐的玩家
+    - 所有玩家点击"我知道了"后继续流程
+    - 分支:
+      - 若被放逐的是猎人 → 触发猎人开枪
+      - 若被放逐的是白痴 → 触发白痴翻牌
+      - 否则 → 进入遗言阶段
+      - 若平票 → 触发平票重投
+================================================================================
+-->
+<div id="modal-vote-result" class="modal-overlay" onclick="closeModal('modal-vote-result')">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-title">📊 投 票 结 果</div>
+    <div class="modal-body">
+      <ul class="vote-result-list">
+        <li class="vote-result-item"><span class="name">张三</span><span class="count">3票</span></li>
+        <li class="vote-result-item"><span class="name">李四</span><span class="count">2票</span></li>
+        <li class="vote-result-item"><span class="name">王五</span><span class="count">1票</span></li>
+        <li class="vote-result-item"><span class="name">弃票</span><span class="count">1票</span></li>
+      </ul>
+      <div class="divider"></div>
+      <p style="color: #e94560; font-weight: 600;">李四被放逐！</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-vote-result')">我 知 道 了</button>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  全局组件: 平票重投 Modal (TieVoteModal)
+================================================================================
+  组件路径: client/src/components/modals/TieVoteModal.tsx
+  使用位置: VotePage 投票出现平票时触发
+  
+  State:
+    - show: boolean             // 是否显示
+    - tiePlayers: string[]      // 平票候选列表
+    - votes: Record<string, number>  // 各平票候选得票数
+  
+  业务逻辑:
+    - 投票出现多人最高票相同时触发
+    - 显示平票玩家列表
+    - 点击"开始重投"进入重投投票界面
+    - 重投规则:
+      - 只对平票候选投票
+      - 若重投仍平票 → 平安夜，无人被放逐
+================================================================================
+-->
+<div id="modal-tie-vote" class="modal-overlay" onclick="closeModal('modal-tie-vote')">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-title">⚖️ 平 票 重 投</div>
+    <div class="modal-body">
+      <ul class="vote-result-list">
+        <li class="vote-result-item"><span class="name">张三</span><span class="count">3票</span></li>
+        <li class="vote-result-item"><span class="name">李四</span><span class="count">3票</span></li>
+      </ul>
+      <div class="divider"></div>
+      <p>平票！</p>
+      <p class="text-sm">请对以下玩家重投:</p>
+      <p style="color: #e94560; font-weight: 600;">张三、李四</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-tie-vote'); showPage('page-vote')">开 始 重 投</button>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  全局组件: 夜晚结算过渡 Modal (NightResolveModal)
+================================================================================
+  组件路径: client/src/components/modals/NightResolveModal.tsx
+  使用位置: 所有夜间操作完成后自动触发
+  
+  State:
+    - show: boolean             // 是否显示
+  
+  业务逻辑:
+    - 所有角色夜间操作完成后触发
+    - 显示简短的结算动画/提示
+    - 持续时间: 1-2秒
+    - 后续: 自动进入白天死亡通报页面
+================================================================================
+-->
+<div id="modal-night-resolve" class="modal-overlay">
+  <div class="modal-content">
+    <div class="modal-title">🌙 夜 晚 结 算</div>
+    <div class="modal-body">
+      <p style="font-size: 32px;">⏳</p>
+      <p>结算中...</p>
+    </div>
+  </div>
+</div>
+
+<!--
+================================================================================
+  全局组件: 帮助弹窗 (HelpOverlay)
+================================================================================
+  组件路径: client/src/components/HelpOverlay.tsx
+  使用位置: 所有页面 (通过 Header 中的帮助按钮触发)
+  
+  State:
+    - show: boolean             // 是否显示
+  
+  业务逻辑:
+    - 所有页面都可以看到帮助
+    - 点击帮助按钮显示，点击关闭或遮罩层隐藏
+    - 包含角色说明、胜利条件、游戏流程
+================================================================================
+-->
+<div id="help-overlay" class="help-overlay" onclick="toggleHelp()">
+  <div class="help-panel" onclick="event.stopPropagation()">
+    <div class="header">
+      <h3>❓ 游戏帮助</h3>
+      <button class="help-btn" onclick="toggleHelp()">✕ 关闭</button>
+    </div>
+    <div class="divider"></div>
+    <div class="help-section">
+      <h4>【角色说明】</h4>
+      <p>🐺 狼人：夜间与同伴讨论后刀人<br>👤 平民：无特殊能力，靠发言找狼<br>👁️ 预言家：每晚查验一人身份<br>🧪 女巫：解药救人 + 毒药毒人<br>🔫 猎人：死亡可开枪带走一人<br>🛡️ 守卫：每晚守护一人<br>🤪 白痴：被投票可翻牌存活</p>
+    </div>
+    <div class="help-section">
+      <h4>【胜利条件】</h4>
+      <p>好人胜利：所有狼人出局<br>狼人胜利：<br>• 5-9人局(屠城)：狼人数量≥好人<br>• 10-12人局(屠边)：屠神或屠民</p>
+    </div>
+    <div class="help-section">
+      <h4>【游戏流程】</h4>
+      <p>夜晚 → 狼人刀人 → 预言家查验 → 女巫用药 → 守卫守护<br>白天 → 死亡通报 → 遗言 → 自由讨论 → 投票放逐</p>
+    </div>
+    <div class="help-section">
+      <h4>【断线规则】</h4>
+      <p>等待阶段断线：不计时，随时可重连<br>游戏中断线：2分钟倒计时，超时判死亡</p>
+    </div>
+  </div>
+</div>
+
+<!--
+  底部导航 (仅用于原型演示，实际项目中不需要)
+  实际项目中通过 WebSocket 事件和路由控制页面跳转
+  
+  页面跳转逻辑说明:
+    - 实际项目中不使用底部导航，而是通过 WebSocket 事件触发页面切换
+    - 例如: 收到 'night:phase' 事件时，根据当前玩家角色决定显示哪个页面
+    - 页面状态由服务器控制，客户端只是响应式渲染
+-->
+<div class="page-nav">
+  <button onclick="showPage('page-join')" class="active" id="nav-join">加入</button>
+  <button onclick="showPage('page-lobby')" id="nav-lobby">大厅</button>
+  <button onclick="showPage('page-role')" id="nav-role">角色</button>
+  <button onclick="showPage('page-night-wait')" id="nav-night-wait">夜晚等待</button>
+  <button onclick="showPage('page-wolf')" id="nav-wolf">狼人</button>
+  <button onclick="showPage('page-seer')" id="nav-seer">预言家</button>
+  <button onclick="showPage('page-witch')" id="nav-witch">女巫</button>
+  <button onclick="showPage('page-guard')" id="nav-guard">守卫</button>
+  <button onclick="showPage('page-day-reveal')" id="nav-day-reveal">白天</button>
+  <button onclick="showPage('page-hunter')" id="nav-hunter">猎人</button>
+  <button onclick="showPage('page-vote')" id="nav-vote">投票</button>
+  <button onclick="showPage('page-end')" id="nav-end">结束</button>
+  <button onclick="showPage('page-disconnect')" id="nav-disconnect">断线</button>
+  <button onclick="showPage('page-nojoin')" id="nav-nojoin">无法加入</button>
+  <button onclick="showPage('page-host')" id="nav-host">主机</button>
+  <button onclick="showPage('page-host-role')" id="nav-host-role">主机分配</button>
+  <div style="width: 100%; text-align: center; margin-top: 4px; font-size: 10px; color: #aaa;">Modals:</div>
+  <button onclick="openModal('modal-last-words')">遗言</button>
+  <button onclick="openModal('modal-idiot-reveal')">白痴翻牌</button>
+  <button onclick="openModal('modal-vote-result')">投票结果</button>
+  <button onclick="openModal('modal-tie-vote')">平票重投</button>
+  <button onclick="openModal('modal-night-resolve')">夜晚结算</button>
+</div>
+
+<script>
+/**
+ * 页面切换函数
+ * 实际项目中，页面切换由 WebSocket 事件驱动，而不是手动调用
+ * 
+ * 示例:
+ *   ws.onmessage = (event) => {
+ *     const data = JSON.parse(event.data);
+ *     switch (data.type) {
+ *       case 'game:start':
+ *         navigateTo('role');
+ *         break;
+ *       case 'night:phase':
+ *         if (data.phase === 'wolf') navigateTo('wolf-action');
+ *         else navigateTo('night-wait');
+ *         break;
+ *       // ... 更多事件处理
+ *     }
+ *   };
+ */
+function showPage(pageId) {
+  // 隐藏所有页面
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  // 显示目标页面
+  document.getElementById(pageId).classList.add('active');
+  
+  // 更新底部导航状态 (仅原型演示用)
+  document.querySelectorAll('.page-nav button').forEach(b => b.classList.remove('active'));
+  const navId = 'nav-' + pageId.replace('page-', '');
+  const navBtn = document.getElementById(navId);
+  if (navBtn) navBtn.classList.add('active');
+}
+
+/**
+ * 网格项选择函数
+ * 用于玩家选择目标 (狼人刀人、预言家查验、女巫毒人、守卫守护、投票等)
+ * 
+ * 实际项目中的实现:
+ *   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+ *   
+ *   const handleSelectPlayer = (playerId: string) => {
+ *     if (disabledPlayers.includes(playerId)) return;
+ *     setSelectedTarget(playerId);
+ *   };
+ */
+function selectGrid(el) {
+  // 禁用的网格项不可选择
+  if (el.classList.contains('disabled')) return;
+  
+  // 清除其他选中状态
+  el.parentElement.querySelectorAll('.grid-item').forEach(item => item.classList.remove('selected'));
+  // 设置当前选中状态
+  el.classList.add('selected');
+}
+
+/**
+ * 帮助弹窗切换函数
+ * 所有页面都可以访问帮助，通过 Header 中的帮助按钮触发
+ * 
+ * 实际项目中的实现:
+ *   const [showHelp, setShowHelp] = useState(false);
+ *   
+ *   const toggleHelp = () => setShowHelp(prev => !prev);
+ *   
+ *   // 在组件中:
+ *   <HelpOverlay show={showHelp} onClose={() => setShowHelp(false)} />
+ */
+function toggleHelp() {
+  document.getElementById('help-overlay').classList.toggle('show');
+}
+
+/**
+ * 打开 Modal 函数
+ * 用于显示各种轻量级交互提示 (遗言、白痴翻牌、投票结果等)
+ * 
+ * 实际项目中的实现:
+ *   const [showModal, setShowModal] = useState<string | null>(null);
+ *   
+ *   const openModal = (modalId: string) => setShowModal(modalId);
+ *   const closeModal = () => setShowModal(null);
+ */
+function openModal(modalId) {
+  document.getElementById(modalId).classList.add('show');
+}
+
+/**
+ * 关闭 Modal 函数
+ * 点击遮罩层或关闭按钮时调用
+ */
+function closeModal(modalId) {
+  document.getElementById(modalId).classList.remove('show');
+}
+</script>
+
+</body>
+</html>
