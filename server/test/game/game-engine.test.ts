@@ -245,6 +245,87 @@ test('hunter vote elimination triggers hunter shot phase', () => {
   assert.equal(state.phase, GAME_PHASES.dayVoteResult)
 })
 
+test('hunter killed by wolf can shoot in day hunter-night phase', () => {
+  const joinedPlayers = createPlayers(8)
+  const sessionMap = createSessionMap(joinedPlayers)
+
+  startGameBySessionToken(joinedPlayers[0].sessionToken, () => 0)
+  confirmAllRoles(joinedPlayers)
+
+  const state = getRoomState()
+  const wolfPlayers = state.players.filter((player) => player.role === 'WOLF')
+  const seerPlayer = state.players.find((player) => player.role === 'SEER')
+  const witchPlayer = state.players.find((player) => player.role === 'WITCH')
+  const hunterPlayer = state.players.find((player) => player.role === 'HUNTER')
+  const targetVillager = state.players.find((player) => {
+    return player.role === 'VILLAGER' && player.alive
+  })
+
+  assert.ok(seerPlayer)
+  assert.ok(witchPlayer)
+  assert.ok(hunterPlayer)
+  assert.ok(targetVillager)
+
+  wolfPlayers.forEach((wolfPlayer) => {
+    submitWolfKillBySessionToken(sessionMap.get(wolfPlayer.id)!, hunterPlayer.id)
+  })
+  submitSeerCheckBySessionToken(
+    sessionMap.get(seerPlayer.id)!,
+    targetVillager.id
+  )
+  submitWitchActionBySessionToken(sessionMap.get(witchPlayer.id)!, 'SKIP')
+
+  assert.equal(state.phase, GAME_PHASES.dayHunterNight)
+  assert.equal(state.hunterActionState?.hunterId, hunterPlayer.id)
+
+  submitHunterShotBySessionToken(
+    sessionMap.get(hunterPlayer.id)!,
+    targetVillager.id
+  )
+
+  assert.equal(targetVillager.alive, false)
+  assert.equal(state.phase, GAME_PHASES.dayLastWords)
+})
+
+test('hunter poisoned by witch cannot trigger hunter shot phase', () => {
+  const joinedPlayers = createPlayers(8)
+  const sessionMap = createSessionMap(joinedPlayers)
+
+  startGameBySessionToken(joinedPlayers[0].sessionToken, () => 0)
+  confirmAllRoles(joinedPlayers)
+
+  const state = getRoomState()
+  const wolfPlayers = state.players.filter((player) => player.role === 'WOLF')
+  const seerPlayer = state.players.find((player) => player.role === 'SEER')
+  const witchPlayer = state.players.find((player) => player.role === 'WITCH')
+  const hunterPlayer = state.players.find((player) => player.role === 'HUNTER')
+  const villagerTarget = state.players.find((player) => {
+    return player.role === 'VILLAGER' && player.alive
+  })
+
+  assert.ok(seerPlayer)
+  assert.ok(witchPlayer)
+  assert.ok(hunterPlayer)
+  assert.ok(villagerTarget)
+
+  wolfPlayers.forEach((wolfPlayer) => {
+    submitWolfKillBySessionToken(sessionMap.get(wolfPlayer.id)!, villagerTarget.id)
+  })
+  submitSeerCheckBySessionToken(
+    sessionMap.get(seerPlayer.id)!,
+    villagerTarget.id
+  )
+  submitWitchActionBySessionToken(
+    sessionMap.get(witchPlayer.id)!,
+    'POISON',
+    hunterPlayer.id
+  )
+
+  assert.equal(state.phase, GAME_PHASES.dayReveal)
+  assert.equal(hunterPlayer.alive, false)
+  assert.equal(state.hunterActionState, null)
+})
+
 test('victory detection covers massacre and side-kill rules', () => {
   const sixPlayers = createPlayers(6)
   startGameBySessionToken(sixPlayers[0].sessionToken, () => 0)

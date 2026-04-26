@@ -23,9 +23,12 @@ import {
 } from '../shared/constants/game-constants.js'
 import type { JoinResponse } from '../shared/types/api-contract.js'
 import type {
+  DeathCause,
   PlayerPublic,
   PlayerState
 } from '../shared/types/domain-models.js'
+
+const DISCONNECT_COUNTDOWN_MS = 120_000
 
 const createInitialRoomState = (): InternalRoomState => {
   const now = Date.now()
@@ -61,6 +64,7 @@ const createInitialRoomState = (): InternalRoomState => {
 let roomState = createInitialRoomState()
 
 const sessionToPlayerId = new Map<string, string>()
+const disconnectDeadlineByPlayerId = new Map<string, number>()
 
 const createSessionToken = (): string => {
   return randomUUID()
@@ -161,6 +165,145 @@ export const createGameSnapshot = () => {
   }
 }
 
+const addDeathRecord = (
+  playerId: string,
+  cause: DeathCause,
+  canLastWords: boolean
+) => {
+  const player = roomState.players.find((item) => item.id === playerId)
+
+  if (!player || !player.alive) {
+    return null
+  }
+
+  player.alive = false
+  player.canVote = false
+
+  roomState.deadPlayers.push({
+    playerId,
+    cause,
+    atPhase: roomState.phase,
+    canLastWords,
+    revealedRole: player.role
+  })
+
+  return {
+    playerId,
+    role: player.role,
+    cause
+  }
+}
+
+export const markPlayerConnectedBySessionToken = (sessionToken: string) => {
+  const playerId = resolvePlayerIdBySessionToken(sessionToken)
+  const player = roomState.players.find((item) => item.id === playerId)
+
+  if (!player) {
+    throw new Error('PLAYER_NOT_FOUND')
+  }
+
+  const wasDisconnected = player.connection !== 'CONNECTED'
+
+  player.connection = 'CONNECTED'
+  roomState.updatedAt = Date.now()
+
+  disconnectDeadlineByPlayerId.delete(playerId)
+
+  return {
+    playerId,
+    wasDisconnected
+  }
+}
+
+export const markPlayerDisconnectedBySessionToken = (sessionToken: string) => {
+  const playerId = resolvePlayerIdBySessionToken(sessionToken)
+  const player = roomState.players.find((item) => item.id === playerId)
+
+  if (!player) {
+    throw new Error('PLAYER_NOT_FOUND')
+  }
+
+  player.connection = 'DISCONNECTED'
+  roomState.updatedAt = Date.now()
+
+  if (roomState.status !== GAME_STATUS.running || !player.alive) {
+    disconnectDeadlineByPlayerId.delete(playerId)
+    return {
+      playerId,
+      startCountdown: false,
+      countdownMs: 0
+    }
+  }
+
+  const deadlineMs = Date.now() + DISCONNECT_COUNTDOWN_MS
+  disconnectDeadlineByPlayerId.set(playerId, deadlineMs)
+
+  return {
+    playerId,
+    startCountdown: true,
+    countdownMs: DISCONNECT_COUNTDOWN_MS
+  }
+}
+
+export const getDisconnectDeadlineByPlayerId = (playerId: string) => {
+  return disconnectDeadlineByPlayerId.get(playerId) ?? null
+}
+
+export const hasPendingDisconnectCountdown = (): boolean => {
+  return disconnectDeadlineByPlayerId.size > 0
+}
+
+export const listPendingDisconnectCountdowns = (
+  nowMs: number = Date.now()
+): Array<{
+  playerId: string
+  countdownSec: number
+}> => {
+  const countdowns: Array<{ playerId: string; countdownSec: number }> = []
+
+  disconnectDeadlineByPlayerId.forEach((deadlineMs, playerId) => {
+    const countdownSec = Math.max(1, Math.ceil((deadlineMs - nowMs) / 1000))
+
+    countdowns.push({
+      playerId,
+      countdownSec
+    })
+  })
+
+  return countdowns
+}
+
+export const applyDisconnectTimeoutByPlayerId = (playerId: string) => {
+  const deadlineMs = disconnectDeadlineByPlayerId.get(playerId)
+
+  if (!deadlineMs) {
+    return {
+      applied: false as const,
+      gameEnded: roomState.status === GAME_STATUS.ended
+    }
+  }
+
+  disconnectDeadlineByPlayerId.delete(playerId)
+
+  const death = addDeathRecord(playerId, 'DISCONNECT_TIMEOUT', false)
+
+  if (!death) {
+    return {
+      applied: false as const,
+      gameEnded: roomState.status === GAME_STATUS.ended
+    }
+  }
+
+  evaluateVictory(roomState)
+  roomState.updatedAt = Date.now()
+
+  return {
+    applied: true as const,
+    gameEnded: roomState.status === GAME_STATUS.ended,
+    death
+  }
+}
+
 export const startGameBySessionToken = (
   sessionToken: string,
   randomFn: () => number = Math.random
@@ -243,4 +386,5 @@ export const evaluateVictoryInRoom = () => {
 export const resetRoomStore = () => {
   roomState = createInitialRoomState()
   sessionToPlayerId.clear()
+  disconnectDeadlineByPlayerId.clear()
 }

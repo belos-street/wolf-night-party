@@ -73,3 +73,11 @@ client/src/
 > 相关文档：
 > - [技术栈总览](./01-tech-stack-overview.md)
 > - [界面设计](../product/08-ui-design.md)
+
+## 8. Realtime Session Persistence
+
+- Client persists JoinResponse fields (roomId, playerId, sessionToken, isHost) in sessionStorage.
+- On page refresh, client restores the saved session and reconnects WebSocket automatically.
+- localStorage is intentionally avoided to prevent session collision across same-origin multi-tab testing.
+- If server returns UNAUTHORIZED, client clears persisted session and falls back to re-join flow.
+- Local multi-player testing can use one browser with multiple tabs because each tab has isolated sessionStorage.
