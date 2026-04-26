@@ -1,0 +1,19 @@
+@media (max-width: 360px) {
+  .app-header h1 {
+    font-size: 18px;
+  }
+
+  .top-nav button {
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+
+  .title {
+    font-size: 15px;
+  }
+
+  .player-row,
+  .target {
+    font-size: 13px;
+  }
+}
