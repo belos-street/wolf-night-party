@@ -10,7 +10,13 @@
 | 2 | [后端技术栈](./02-backend-stack.md) | Node.js/Fastify/WebSocket/状态机后端方案 |
 | 3 | [前端技术栈](./03-frontend-stack.md) | React 客户端、UI 方案、状态管理策略 |
 | 4 | [运行与部署栈](./04-runtime-deployment-stack.md) | Termux 运行、局域网联机、开发/部署流程 |
-| 5 | [Retro 视觉规范](./retro.md) | 前端视觉风格唯一参考基线（90s 复古） |
+| 5 | [API 契约](./05-api-contract.md) | HTTP/WS 事件协议、消息结构与处理原则 |
+| 6 | [领域模型](./06-domain-models.md) | Room/Player/Action/Vote 等核心数据结构 |
+| 7 | [状态机技术规范](./07-state-machine-spec.md) | 状态迁移、守卫条件、结算顺序、超时策略 |
+| 8 | [错误码与恢复策略](./08-error-codes-recovery.md) | 错误码体系、重连恢复、前端提示策略 |
+| 9 | [测试策略](./09-testing-strategy.md) | 单测/集成测试范围、覆盖门槛、回归清单 |
+| 10 | [工程约定](./10-engineering-conventions.md) | 命名、脚本、质量工具与协作规范 |
+| 11 | [Retro 视觉规范](./retro.md) | 前端视觉风格唯一参考基线（90s 复古） |
 
 ## 阅读建议
 

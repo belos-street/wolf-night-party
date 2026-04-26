@@ -41,7 +41,7 @@
 
 ## 6. 技术栈补充建议
 
-1. 质量保障：`ESLint + Prettier + Vitest`（后端规则与状态机先上单测）
+1. 质量保障：`ESLint + Prettier + node:test + c8`（后端先沿用 Fastify 脚手架内置测试体系）
 2. 协议校验：`zod`（统一校验 HTTP/WS 入参，减少脏数据进入状态机）
 3. 前端状态管理：`zustand`（仅管理 UI 层临时状态，不接管服务端权威状态）
 4. UI 辅助库：`clsx + tailwind-merge + class-variance-authority`（与 shadcn/ui 生态一致）
