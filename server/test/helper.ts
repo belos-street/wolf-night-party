@@ -28,11 +28,15 @@ async function build (t: TestContext) {
   // fastify-plugin ensures that all decorators
   // are exposed for testing purposes, this is
   // different from the production setup
-  const app = await helper.build(argv, config())
+  const app = await helper.build(argv, config(), {
+    logger: false,
+    pluginTimeout: 30000
+  })
 
   // Tear down our app after we are done
-  // eslint-disable-next-line no-void
-  t.after(() => void app.close())
+  t.after(async () => {
+    await app.close()
+  })
 
   return app
 }

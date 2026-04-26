@@ -21,21 +21,22 @@
 
 ## M1. 工程基线（P0）
 
-- [ ] 根目录工作区脚本统一（`dev/build/lint/test`）
-- [ ] 确认包管理策略（推荐 `pnpm workspace` + 根锁文件）
-- [ ] `client` 初始化校验（Vite + React + TS）
-- [ ] `server` 初始化校验（Fastify + ESM + TS）
-- [ ] 脚本命令统一为 `pnpm run`（移除 `npm run` 混用）
-- [ ] 接入 `ESLint + Prettier`
-- [ ] 后端测试沿用 `node:test + c8`（Fastify 脚手架默认）
+- [x] 根目录工作区脚本统一（`dev/build/lint/test`）
+- [x] 确认包管理策略（推荐 `pnpm workspace` + 根锁文件）
+- [x] `client` 初始化校验（Vite + React + TS）
+- [x] `server` 初始化校验（Fastify + ESM + TS）
+- [x] 脚本命令统一为 `pnpm run`（移除 `npm run` 混用）
+- [x] 接入 `ESLint + Prettier`
+- [x] 后端测试沿用 `node:test + c8`（Fastify 脚手架默认）
 - [ ] 前端测试框架择机引入（建议 `Vitest + Testing Library`）
-- [ ] Node 版本基线固定为 `>=24`
+- [x] Node 版本基线固定为 `>=24`
 
 完成标准：
-- [ ] `pnpm -r build` 可通过
-- [ ] `pnpm -r lint` 可通过
-- [ ] `pnpm -r test` 至少跑通基础样例
-- [ ] 根目录一键安装与一键开发可执行（`pnpm install`、`pnpm -r dev`）
+- [x] `pnpm -r build` 可通过
+- [x] `pnpm -r lint` 可通过
+- [x] `pnpm -r test` 至少跑通基础样例
+- [x] 根目录一键安装可执行（`pnpm install`）
+- [ ] 根目录一键开发可执行（`pnpm -r dev`）
 
 依据：
 - `technical/01-tech-stack-overview.md`
@@ -44,15 +45,15 @@
 
 ## M2. 协议与共享模型（P0）
 
-- [ ] 落地 HTTP 契约：`GET /api/health`、`POST /api/join`
-- [ ] 落地 WS 事件信封结构（`event/requestId/payload`）
-- [ ] 统一事件名常量（client/server 共识）
-- [ ] 建立核心领域类型：`Room/Player/Vote/DeathRecord`
-- [ ] 为 HTTP/WS 入参建立 `zod` 校验
+- [x] 落地 HTTP 契约：`GET /api/health`、`POST /api/join`
+- [x] 落地 WS 事件信封结构（`event/requestId/payload`）
+- [x] 统一事件名常量（client/server 共识）
+- [x] 建立核心领域类型：`Room/Player/Vote/DeathRecord`
+- [x] 为 HTTP/WS 入参建立 `zod` 校验
 
 完成标准：
-- [ ] 关键接口类型与字段和文档一致
-- [ ] 非法 payload 会被拒绝并返回标准错误结构
+- [x] 关键接口类型与字段和文档一致
+- [x] 非法 payload 会被拒绝并返回标准错误结构
 
 依据：
 - `technical/05-api-contract.md`
@@ -61,17 +62,17 @@
 
 ## M3. 后端状态机与规则引擎（P0）
 
-- [ ] 实现房间生命周期：等待/进行中/结束
-- [ ] 实现标准预设映射（6-12）
-- [ ] 实现角色分配与私发
-- [ ] 实现夜晚结算链路（狼/预言家/守卫/女巫/结算）
-- [ ] 实现白天链路（通报/猎人/遗言/投票/重投/白痴）
-- [ ] 实现胜利检测（6-9 屠城，10-12 屠边）
-- [ ] 实现超时默认动作
+- [x] 实现房间生命周期：等待/进行中/结束
+- [x] 实现标准预设映射（6-12）
+- [x] 实现角色分配与私发
+- [x] 实现夜晚结算链路（狼/预言家/守卫/女巫/结算）
+- [x] 实现白天链路（通报/猎人/遗言/投票/重投/白痴）
+- [x] 实现胜利检测（6-9 屠城，10-12 屠边）
+- [x] 实现超时默认动作
 
 完成标准：
-- [ ] 状态迁移与文档主链一致
-- [ ] 至少 1 条完整对局流程在服务端可自洽推进
+- [x] 状态迁移与文档主链一致
+- [x] 至少 1 条完整对局流程在服务端可自洽推进
 
 依据：
 - `product/03-game-flow.md`

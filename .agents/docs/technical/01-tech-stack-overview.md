@@ -8,7 +8,7 @@
 
 | 层级 | 方案 | 状态 | 说明 |
 |------|------|------|------|
-| 运行环境 | `Node.js >= 24` + `Termux` | 已定 | 统一以 Node 24+ 为最低版本（推荐 24.x LTS） |
+| 运行环境 | `Node.js >= 22.13.0` + `Termux` | 已定 | 统一以 Node 22.13.0+ 为最低版本（推荐 22.x LTS） |
 | 后端语言 | `TypeScript` | 已定 | 提升状态机与事件协议的类型安全 |
 | 后端框架 | `Fastify` + `@fastify/websocket`（基于 `ws`） | 已定 | 标准模式不引入 Socket.IO，降低复杂度与依赖 |
 | 前端框架 | `React` + `TypeScript` | 已定 | 组件化开发，与状态驱动页面匹配 |
@@ -35,7 +35,7 @@
 ## 5. 本轮确认结论（2026-04-26）
 
 1. WebSocket 标准实现采用 `@fastify/websocket + ws`，首版不使用 Socket.IO
-2. Node.js 最低版本固定为 `24+`（推荐 24.x LTS）
+2. Node.js 最低版本固定为 `22.13.0+`（推荐 22.x LTS）
 3. 前端确认采用 `Tailwind CSS + shadcn/ui`
 4. 视觉风格统一遵循 [retro.md](./retro.md)
 

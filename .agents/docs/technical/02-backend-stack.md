@@ -13,7 +13,7 @@
 
 | 类别 | 方案 | 用途 |
 |------|------|------|
-| 运行时 | `Node.js >= 24` | Termux 中运行服务（推荐 24.x LTS） |
+| 运行时 | `Node.js >= 22.13.0` | Termux 中运行服务（推荐 22.x LTS） |
 | 语言 | `TypeScript` | 类型约束与可维护性 |
 | HTTP 框架 | `Fastify` | 处理 join/start 等接口 |
 | 实时通信 | `@fastify/websocket` + `ws` | 推送阶段变化与接收玩家操作 |
