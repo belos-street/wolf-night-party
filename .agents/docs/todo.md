@@ -29,7 +29,7 @@
 - [x] 接入 `ESLint + Prettier`
 - [x] 后端测试沿用 `node:test + c8`（Fastify 脚手架默认）
 - [ ] 前端测试框架择机引入（建议 `Vitest + Testing Library`）
-- [x] Node 版本基线固定为 `>=24`
+- [x] Node 版本基线固定为 `22.x`（最低 `22.13.0`）
 
 完成标准：
 - [x] `pnpm -r build` 可通过
