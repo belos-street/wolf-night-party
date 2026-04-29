@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { HelpModal } from './components/help-modal'
+import { SeerLogModal } from './components/seer-log-modal'
+import { VoteResultModal } from './components/vote-result-modal'
 import { useGameClient } from './hooks/use-game-client'
 import { isVotePhase } from './lib/phase-view'
 import { DayPage } from './pages/day-page'
@@ -12,6 +14,7 @@ import { NightPage } from './pages/night-page'
 import { RolePage } from './pages/role-page'
 
 const DISABLED_HINT = '当前阶段或身份不允许该操作，请等待系统推进。'
+const ROLE_CONFIRM_PENDING_HINT = '请等待别的玩家确认身份。'
 
 const connectionText: Record<string, string> = {
   IDLE: '未连接',
@@ -23,7 +26,28 @@ const connectionText: Record<string, string> = {
 
 function App() {
   const [isHelpOpen, setHelpOpen] = useState(false)
+  const [isSeerLogOpen, setSeerLogOpen] = useState(false)
+  const [isVoteResultOpen, setVoteResultOpen] = useState(false)
+  const [roleConfirmSubmitted, setRoleConfirmSubmitted] = useState(false)
   const game = useGameClient()
+
+  useEffect(() => {
+    if (game.currentView !== 'ROLE' || game.snapshot?.phase !== 'ROLE_VIEW') {
+      setRoleConfirmSubmitted(false)
+    }
+  }, [game.currentView, game.snapshot?.phase])
+
+  useEffect(() => {
+    if (game.pendingSeerResult) {
+      setSeerLogOpen(true)
+    }
+  }, [game.pendingSeerResult])
+
+  useEffect(() => {
+    if (game.voteResult) {
+      setVoteResultOpen(true)
+    }
+  }, [game.voteResult])
 
   const canStartGame = useMemo(() => {
     if (!game.session?.isHost) {
@@ -75,8 +99,20 @@ function App() {
     game.requestHelp()
   }
 
+  const closeSeerLogModal = () => {
+    setSeerLogOpen(false)
+    game.dismissSeerResult()
+  }
+
   const canAdvanceDayPhase = (phase: string) => {
     if (game.connectionStatus !== 'CONNECTED') {
+      return false
+    }
+
+    if (
+      (phase === 'DAY_REVEAL' || phase === 'DAY_LAST_WORDS') &&
+      !game.session?.isHost
+    ) {
       return false
     }
 
@@ -142,13 +178,22 @@ function App() {
     }
 
     if (game.currentView === 'ROLE') {
+      const canConfirmRole =
+        game.snapshot.phase === 'ROLE_VIEW' && !roleConfirmSubmitted
+      const roleDisabledHint = roleConfirmSubmitted
+        ? ROLE_CONFIRM_PENDING_HINT
+        : DISABLED_HINT
+
       return (
         <RolePage
           phase={game.snapshot.phase}
           roleInfo={game.roleInfo}
-          canConfirm={game.snapshot.phase === 'ROLE_VIEW'}
-          onConfirmRole={game.confirmRoleView}
-          disabledHint={DISABLED_HINT}
+          canConfirm={canConfirmRole}
+          onConfirmRole={() => {
+            setRoleConfirmSubmitted(true)
+            game.confirmRoleView()
+          }}
+          disabledHint={roleDisabledHint}
         />
       )
     }
@@ -160,6 +205,7 @@ function App() {
           phase={game.snapshot.phase}
           players={game.snapshot.players}
           roleInfo={game.roleInfo}
+          wolfVoteHints={game.wolfVoteHints}
           selfPlayerId={game.session.playerId}
           disabledHint={DISABLED_HINT}
           onSubmitWolfKill={game.submitWolfKill}
@@ -183,8 +229,15 @@ function App() {
           canSubmitVote={
             isVotePhase(game.snapshot.phase) && game.connectionStatus === 'CONNECTED'
           }
+          voteCountdownSec={game.voteCountdownSec}
           canAdvancePhase={canAdvanceDayPhase(game.snapshot.phase)}
-          disabledHint={DISABLED_HINT}
+          disabledHint={
+            (game.snapshot.phase === 'DAY_REVEAL' ||
+              game.snapshot.phase === 'DAY_LAST_WORDS') &&
+            !game.session.isHost
+              ? '仅主机可以推进当前阶段。'
+              : DISABLED_HINT
+          }
           onAdvancePhase={game.advancePhase}
           onSubmitVote={game.submitDayVote}
           onSubmitHunterShot={game.submitHunterShot}
@@ -229,8 +282,17 @@ function App() {
             <div className="head-row">
               <p className="meta">
                 房间 {game.snapshot?.roomId ?? 'room_local'} · 阶段{' '}
-                {game.snapshot?.phase ?? 'WAITING'}
+                {game.snapshot?.phase ?? 'WAITING'} · 身份{' '}
+                {game.roleInfo?.role ?? '待分配'}
               </p>
+              {game.roleInfo?.role === 'SEER' && game.seerChecks.length > 0 ? (
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => setSeerLogOpen(true)}>
+                  👁️查验记录
+                </button>
+              ) : null}
               <button
                 className="btn btn-ghost"
                 type="button"
@@ -261,6 +323,17 @@ function App() {
         open={isHelpOpen}
         onClose={() => setHelpOpen(false)}
         remoteHelpSummary={game.remoteHelpSummary}
+      />
+      <SeerLogModal
+        open={isSeerLogOpen}
+        latest={game.pendingSeerResult}
+        history={game.seerChecks}
+        onClose={closeSeerLogModal}
+      />
+      <VoteResultModal
+        open={isVoteResultOpen}
+        result={game.voteResult}
+        onClose={() => setVoteResultOpen(false)}
       />
     </div>
   )

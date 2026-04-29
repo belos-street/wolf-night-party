@@ -65,3 +65,31 @@ test('join route validates payload', async (t) => {
   assert.equal(body.ok, false)
   assert.equal(body.error.code, 'BAD_REQUEST')
 })
+
+test('join route rejects duplicated nickname', async (t) => {
+  const app = await build(t)
+
+  const firstJoinResponse = await app.inject({
+    method: 'POST',
+    url: '/api/join',
+    payload: {
+      nickname: 'P1'
+    }
+  })
+
+  assert.equal(firstJoinResponse.statusCode, 200)
+
+  const duplicatedJoinResponse = await app.inject({
+    method: 'POST',
+    url: '/api/join',
+    payload: {
+      nickname: 'p1'
+    }
+  })
+
+  assert.equal(duplicatedJoinResponse.statusCode, 409)
+
+  const body = JSON.parse(duplicatedJoinResponse.payload)
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'NICKNAME_DUPLICATE')
+})

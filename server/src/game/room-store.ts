@@ -57,6 +57,7 @@ const createInitialRoomState = (): InternalRoomState => {
     },
     lastGuardTargetId: null,
     lastVoteResult: null,
+    lastVoteBallots: null,
     gameResult: null
   }
 }
@@ -85,12 +86,29 @@ const resolvePlayerIdBySessionToken = (sessionToken: string): string => {
 }
 
 export const joinRoom = (nickname: string, avatarId: string): JoinResponse => {
+  const normalizedNickname = nickname.trim()
+
+  if (normalizedNickname.length === 0) {
+    throw new Error('BAD_REQUEST')
+  }
+
   if (roomState.status !== GAME_STATUS.waiting) {
     throw new Error('GAME_ALREADY_STARTED')
   }
 
   if (roomState.players.length >= PLAYER_COUNT_LIMITS.max) {
     throw new Error('PLAYER_LIMIT_EXCEEDED')
+  }
+
+  const duplicatedNickname = roomState.players.some((player) => {
+    return (
+      player.nickname.trim().toLocaleLowerCase() ===
+      normalizedNickname.toLocaleLowerCase()
+    )
+  })
+
+  if (duplicatedNickname) {
+    throw new Error('NICKNAME_DUPLICATE')
   }
 
   const sessionToken = createSessionToken()
@@ -100,7 +118,7 @@ export const joinRoom = (nickname: string, avatarId: string): JoinResponse => {
 
   const player: PlayerState = {
     id: playerId,
-    nickname,
+    nickname: normalizedNickname,
     avatarId,
     seatNo: nextSeatNo,
     isHost,

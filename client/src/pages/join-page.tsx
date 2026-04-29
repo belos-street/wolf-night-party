@@ -1,5 +1,24 @@
 import { type FormEvent, useState } from 'react'
 
+const DEFAULT_NICKNAME_ORDER_KEY = 'wolf-night-party:next-default-order'
+
+const createDefaultNickname = (): string => {
+  if (typeof window === 'undefined') {
+    return 'P1'
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(DEFAULT_NICKNAME_ORDER_KEY)
+    const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 1
+    const order = Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 1
+
+    window.localStorage.setItem(DEFAULT_NICKNAME_ORDER_KEY, String(order + 1))
+    return `P${order}`
+  } catch {
+    return 'P1'
+  }
+}
+
 interface JoinPageProps {
   canJoin: boolean
   isSubmitting: boolean
@@ -15,7 +34,7 @@ export const JoinPage = ({
   errorMessage,
   onJoin
 }: JoinPageProps) => {
-  const [nickname, setNickname] = useState('张三')
+  const [nickname, setNickname] = useState(() => createDefaultNickname())
 
   if (!canJoin) {
     return (

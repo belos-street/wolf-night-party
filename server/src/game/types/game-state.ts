@@ -55,5 +55,6 @@ export interface InternalRoomState {
     isTie: boolean
     roundNo: 1 | 2
   } | null
+  lastVoteBallots: Record<string, string | 'abstain'> | null
   gameResult: GameResult | null
 }

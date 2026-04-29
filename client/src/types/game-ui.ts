@@ -40,6 +40,21 @@ export interface RoleInfo {
   description: string
 }
 
+export interface SeerCheckRecord {
+  targetId: string
+  targetName: string
+  alignment: 'GOOD' | 'WOLF'
+  round: number
+  checkedAt: number
+}
+
+export interface WolfVoteHint {
+  wolfId: string
+  wolfName: string
+  targetId: string
+  targetName: string
+}
+
 export interface DisconnectNotice {
   playerId: string
   countdownSec: number
@@ -54,6 +69,15 @@ export interface DayDeath {
 export interface VoteResultInfo {
   eliminatedId: string | null
   isTie: boolean
+  roundNo: 1 | 2
+  ballots: VoteBallotInfo[]
+}
+
+export interface VoteBallotInfo {
+  voterId: string
+  voterName: string
+  targetId: string | null
+  targetName: string | null
 }
 
 export interface GameOverRole {
@@ -71,8 +95,11 @@ export interface GameClientData {
   session: JoinResponse | null
   snapshot: GameSnapshot | null
   roleInfo: RoleInfo | null
+  seerChecks: SeerCheckRecord[]
+  wolfVoteHints: WolfVoteHint[]
   dayDeaths: DayDeath[]
   voteResult: VoteResultInfo | null
+  voteCountdownSec: number | null
   gameOverInfo: GameOverInfo | null
   pendingDisconnects: DisconnectNotice[]
   remoteHelpSummary: string | null

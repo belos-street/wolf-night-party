@@ -45,6 +45,8 @@ type WsLikeSocket = {
 const WS_OPEN_STATE = 1
 const HEARTBEAT_INTERVAL_MS = 15_000
 const NO_TARGET = null
+const VOTE_COUNTDOWN_SEC = 10
+const VOTE_TIMEOUT_MS = VOTE_COUNTDOWN_SEC * 1000
 
 const WS_ERROR_MESSAGE_MAP: Record<string, string> = {
   BAD_REQUEST: 'WebSocket message schema validation failed',
@@ -53,6 +55,7 @@ const WS_ERROR_MESSAGE_MAP: Record<string, string> = {
   NOT_YOUR_TURN: 'This action is not available for current player',
   INVALID_TARGET: 'Target is invalid in current phase',
   INVALID_ACTION: 'Action payload is invalid',
+  ALREADY_SUBMITTED: 'This action has already been submitted',
   GAME_ALREADY_STARTED: 'Game already started',
   INVALID_PLAYER_COUNT: 'Player count must be between 6 and 12',
   HOST_ONLY_ACTION: 'Only host can trigger this action',
@@ -70,6 +73,11 @@ type WsExecutionSnapshot = {
   deadCount: number
   voteSignature: string | null
   gameResultSignature: string | null
+}
+
+type StateDrivenEventContext = {
+  event: string
+  requestId?: string | null
 }
 
 const parseJsonString = (message: WsIncomingData): unknown => {
@@ -213,6 +221,63 @@ const toGameOverPayload = () => {
   }
 }
 
+const buildSeerResultPayload = (
+  targetId: string
+): Record<string, unknown> | null => {
+  const roomState = getRoomState()
+  const target = roomState.players.find((player) => player.id === targetId)
+
+  if (!target) {
+    return null
+  }
+
+  return {
+    title: 'SEER_RESULT',
+    targetId: target.id,
+    targetName: target.nickname,
+    alignment: target.team,
+    round: roomState.round,
+    checkedAt: Date.now()
+  }
+}
+
+const buildWolfSyncPayload = (): Record<string, unknown> | null => {
+  const roomState = getRoomState()
+  const wolfVotes = roomState.nightActionState?.wolfVotes
+
+  if (!wolfVotes) {
+    return null
+  }
+
+  const votes = Object.entries(wolfVotes)
+    .map(([wolfId, targetId]) => {
+      const wolf = roomState.players.find((player) => player.id === wolfId)
+      const target = roomState.players.find((player) => player.id === targetId)
+
+      if (!wolf || !target) {
+        return null
+      }
+
+      return {
+        wolfId: wolf.id,
+        wolfName: wolf.nickname,
+        targetId: target.id,
+        targetName: target.nickname
+      }
+    })
+    .filter((item): item is {
+      wolfId: string
+      wolfName: string
+      targetId: string
+      targetName: string
+    } => item !== null)
+
+  return {
+    title: 'WOLF_SYNC',
+    votes
+  }
+}
+
 const resolveErrorDescriptor = (error: unknown) => {
   if (error instanceof ZodError) {
     return {
@@ -240,6 +305,8 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
   const socketsByPlayerId = new Map<string, WsLikeSocket>()
   const sessionTokenByPlayerId = new Map<string, string>()
   const disconnectTimerByPlayerId = new Map<string, NodeJS.Timeout>()
+  let votePhaseTimer: NodeJS.Timeout | null = null
+  let votePhaseDeadlineAt: number | null = null
 
   const sendEvent = (
     socket: WsLikeSocket,
@@ -292,6 +359,70 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
     })
   }
 
+  const clearVotePhaseTimer = () => {
+    if (votePhaseTimer) {
+      clearTimeout(votePhaseTimer)
+      votePhaseTimer = null
+    }
+
+    votePhaseDeadlineAt = null
+  }
+
+  const sendVoteCountdown = (
+    deadlineAt: number,
+    excludedPlayerId?: string
+  ) => {
+    broadcast(
+      SERVER_WS_EVENTS.gamePhaseTimer,
+      {
+        scope: 'VOTE',
+        deadlineAt,
+        durationSec: VOTE_COUNTDOWN_SEC
+      },
+      excludedPlayerId
+    )
+  }
+
+  const scheduleVotePhaseTimeout = (triggerEvent: string) => {
+    const roomState = getRoomState()
+    const isVotePhase =
+      roomState.phase === 'DAY_VOTE' || roomState.phase === 'DAY_REVOTE'
+
+    if (!isVotePhase) {
+      clearVotePhaseTimer()
+      return
+    }
+
+    clearVotePhaseTimer()
+    votePhaseDeadlineAt = Date.now() + VOTE_TIMEOUT_MS
+    sendVoteCountdown(votePhaseDeadlineAt)
+
+    votePhaseTimer = setTimeout(() => {
+      const latestRoomState = getRoomState()
+      const stillVotePhase =
+        latestRoomState.phase === 'DAY_VOTE' || latestRoomState.phase === 'DAY_REVOTE'
+
+      if (!stillVotePhase) {
+        clearVotePhaseTimer()
+        return
+      }
+
+      try {
+        const executionBefore = createExecutionSnapshot()
+        applyPhaseTimeoutInRoom()
+        emitStateDrivenEvents(executionBefore, {
+          event: `${triggerEvent}:timeout`,
+          requestId: null
+        })
+      } catch {
+        // ignore timeout apply errors to keep ws loop healthy
+      } finally {
+        clearVotePhaseTimer()
+        scheduleVotePhaseTimeout(`${triggerEvent}:timeout`)
+      }
+    }, VOTE_TIMEOUT_MS)
+  }
+
   const sendRoleInfoToPlayer = (playerId: string) => {
     const socket = socketsByPlayerId.get(playerId)
     const sessionToken = sessionTokenByPlayerId.get(playerId)
@@ -316,14 +447,14 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
   const emitStateDrivenEvents = (
     before: WsExecutionSnapshot,
-    envelope: WsEnvelope
+    eventContext: StateDrivenEventContext
   ) => {
     const roomState = getRoomState()
 
     broadcast(SERVER_WS_EVENTS.gamePhaseChange, {
       phase: roomState.phase,
-      receivedEvent: envelope.event,
-      requestId: envelope.requestId ?? null
+      receivedEvent: eventContext.event,
+      requestId: eventContext.requestId ?? null
     })
 
     if (roomState.deadPlayers.length > before.deadCount) {
@@ -343,10 +474,28 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
     const nextVoteSignature = buildVoteSignature(roomState.lastVoteResult)
 
     if (roomState.lastVoteResult && nextVoteSignature !== before.voteSignature) {
+      const voteDetails = Object.entries(roomState.lastVoteBallots ?? {}).map(
+        ([voterId, targetId]) => {
+          const voter = roomState.players.find((player) => player.id === voterId)
+          const target =
+            targetId === 'abstain'
+              ? null
+              : roomState.players.find((player) => player.id === targetId)
+
+          return {
+            voterId,
+            voterName: voter?.nickname ?? voterId,
+            targetId: targetId === 'abstain' ? null : targetId,
+            targetName: target?.nickname ?? null
+          }
+        }
+      )
+
       broadcast(SERVER_WS_EVENTS.gameVoteResult, {
         eliminatedId: roomState.lastVoteResult.eliminatedId,
         isTie: roomState.lastVoteResult.isTie,
-        roundNo: roomState.lastVoteResult.roundNo
+        roundNo: roomState.lastVoteResult.roundNo,
+        ballots: voteDetails
       })
     }
 
@@ -373,7 +522,7 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
       broadcast(SERVER_WS_EVENTS.gameOver, toGameOverPayload())
     }
 
-    if (envelope.event === CLIENT_WS_EVENTS.gameStart) {
+    if (eventContext.event === CLIENT_WS_EVENTS.gameStart) {
       sendRoleInfoToAllConnectedPlayers()
     }
 
@@ -394,6 +543,11 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (envelope.event === CLIENT_WS_EVENTS.playerConfirmRole) {
       const roomState = getRoomState()
+      const currentPlayer = getPlayerBySessionToken(sessionToken)
+
+      if (!currentPlayer) {
+        throw new Error('UNAUTHORIZED')
+      }
 
       if (roomState.phase === 'ROLE_VIEW') {
         confirmRoleViewBySessionToken(sessionToken)
@@ -407,6 +561,14 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
         roomState.phase === 'DAY_VOTE_RESULT' ||
         roomState.phase === 'DAY_IDIOT_REVEAL'
       ) {
+        if (
+          (roomState.phase === 'DAY_REVEAL' ||
+            roomState.phase === 'DAY_LAST_WORDS') &&
+          !currentPlayer.isHost
+        ) {
+          throw new Error('HOST_ONLY_ACTION')
+        }
+
         advanceDayPhaseInRoom()
         return
       }
@@ -545,7 +707,19 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
         broadcast(SERVER_WS_EVENTS.gameReconnect, { playerId }, playerId)
       }
 
-      sendEvent(wsSocket, SERVER_WS_EVENTS.gameSnapshot, createGameSnapshot())
+      // Keep all connected lobby clients in sync when a new player connects.
+      sendSnapshotToAll()
+
+      if (
+        votePhaseDeadlineAt &&
+        (getRoomState().phase === 'DAY_VOTE' || getRoomState().phase === 'DAY_REVOTE')
+      ) {
+        sendEvent(wsSocket, SERVER_WS_EVENTS.gamePhaseTimer, {
+          scope: 'VOTE',
+          deadlineAt: votePhaseDeadlineAt,
+          durationSec: VOTE_COUNTDOWN_SEC
+        })
+      }
 
       try {
         const roleInfo = getPrivateRoleInfoBySessionToken(sessionToken)
@@ -648,9 +822,79 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
           }
 
           const executionBefore = createExecutionSnapshot()
+          const wolfVoteCountBeforeSubmit =
+            envelope.event === CLIENT_WS_EVENTS.nightSubmitKill
+              ? Object.keys(getRoomState().nightActionState?.wolfVotes ?? {}).length
+              : null
 
           executeClientEvent(sessionToken, envelope)
-          emitStateDrivenEvents(executionBefore, envelope)
+
+          if (envelope.event === CLIENT_WS_EVENTS.nightSubmitSeer) {
+            const targetId = envelope.payload.targetId
+
+            if (typeof targetId === 'string' && targetId.length > 0) {
+              const seerResultPayload = buildSeerResultPayload(targetId)
+
+              if (seerResultPayload) {
+                sendEvent(wsSocket, SERVER_WS_EVENTS.gameNightAction, seerResultPayload)
+              }
+            }
+          }
+
+          if (envelope.event === CLIENT_WS_EVENTS.nightSubmitKill) {
+            const roomState = getRoomState()
+            const wolfVoteCountAfterSubmit = Object.keys(
+              roomState.nightActionState?.wolfVotes ?? {}
+            ).length
+
+            if (
+              roomState.phase === 'NIGHT_WOLF' &&
+              wolfVoteCountBeforeSubmit !== null &&
+              wolfVoteCountBeforeSubmit > 0 &&
+              wolfVoteCountAfterSubmit === 0
+            ) {
+              roomState.players.forEach((player) => {
+                if (!player.alive || player.role !== 'WOLF') {
+                  return
+                }
+
+                const wolfSocket = socketsByPlayerId.get(player.id)
+
+                if (!wolfSocket) {
+                  return
+                }
+
+                sendEvent(wolfSocket, SERVER_WS_EVENTS.gameNightAction, {
+                  title: 'WOLF_RESELECT',
+                  summary: '狼人目标不一致，请重新选择。'
+                })
+              })
+            }
+
+            const wolfSyncPayload = buildWolfSyncPayload()
+
+            if (wolfSyncPayload) {
+              roomState.players.forEach((player) => {
+                if (!player.alive || player.role !== 'WOLF') {
+                  return
+                }
+
+                const wolfSocket = socketsByPlayerId.get(player.id)
+
+                if (!wolfSocket) {
+                  return
+                }
+
+                sendEvent(wolfSocket, SERVER_WS_EVENTS.gameNightAction, wolfSyncPayload)
+              })
+            }
+          }
+
+          emitStateDrivenEvents(executionBefore, {
+            event: envelope.event,
+            requestId: envelope.requestId ?? null
+          })
+          scheduleVotePhaseTimeout(envelope.event)
         } catch (error) {
           const descriptor = resolveErrorDescriptor(error)
           request.log.warn(

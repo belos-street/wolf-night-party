@@ -18,6 +18,7 @@ export const SERVER_WS_EVENTS = {
   gameRoleAssigned: 'game:role_assigned',
   gamePhaseChange: 'game:phase_change',
   gameNightAction: 'game:night_action',
+  gamePhaseTimer: 'game:phase_timer',
   gameDayReveal: 'game:day_reveal',
   gameHunterSkill: 'game:hunter_skill',
   gameVoteResult: 'game:vote_result',

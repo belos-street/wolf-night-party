@@ -18,6 +18,8 @@ import type {
   MainView,
   PlayerPublicSnapshot,
   RoleInfo,
+  SeerCheckRecord,
+  WolfVoteHint,
   VoteResultInfo
 } from '../types/game-ui'
 
@@ -154,14 +156,55 @@ const parseVoteResult = (
 ): VoteResultInfo | null => {
   const eliminatedIdRaw = payload.eliminatedId
   const isTie = payload.isTie === true
+  const roundNoRaw = payload.roundNo
 
   if (eliminatedIdRaw !== null && typeof eliminatedIdRaw !== 'string') {
     return null
   }
 
+  if (roundNoRaw !== 1 && roundNoRaw !== 2) {
+    return null
+  }
+
+  const ballots = Array.isArray(payload.ballots)
+    ? payload.ballots
+        .map((rawBallot) => {
+          if (!isRecord(rawBallot)) {
+            return null
+          }
+
+          const voterId = readString(rawBallot.voterId)
+          const voterName = readString(rawBallot.voterName)
+          const targetIdRaw = rawBallot.targetId
+          const targetNameRaw = rawBallot.targetName
+
+          if (!voterId || !voterName) {
+            return null
+          }
+
+          if (targetIdRaw !== null && typeof targetIdRaw !== 'string') {
+            return null
+          }
+
+          if (targetNameRaw !== null && typeof targetNameRaw !== 'string') {
+            return null
+          }
+
+          return {
+            voterId,
+            voterName,
+            targetId: targetIdRaw ?? null,
+            targetName: targetNameRaw ?? null
+          }
+        })
+        .filter((ballot): ballot is VoteResultInfo['ballots'][number] => ballot !== null)
+    : []
+
   return {
     eliminatedId: eliminatedIdRaw ?? null,
-    isTie
+    isTie,
+    roundNo: roundNoRaw,
+    ballots
   }
 }
 
@@ -202,6 +245,76 @@ const parseGameOverInfo = (
     reason,
     roles
   }
+}
+
+const parseSeerCheckRecord = (
+  payload: Record<string, unknown>
+): SeerCheckRecord | null => {
+  const title = readString(payload.title)
+
+  if (title !== 'SEER_RESULT') {
+    return null
+  }
+
+  const targetId = readString(payload.targetId)
+  const targetName = readString(payload.targetName)
+  const alignment = readString(payload.alignment)
+  const round = readNumber(payload.round)
+  const checkedAt = readNumber(payload.checkedAt) ?? Date.now()
+
+  if (!targetId || !targetName || !alignment || round === null) {
+    return null
+  }
+
+  if (alignment !== 'GOOD' && alignment !== 'WOLF') {
+    return null
+  }
+
+  return {
+    targetId,
+    targetName,
+    alignment,
+    round,
+    checkedAt
+  }
+}
+
+const parseWolfVoteHints = (payload: Record<string, unknown>): WolfVoteHint[] | null => {
+  const title = readString(payload.title)
+
+  if (title !== 'WOLF_SYNC') {
+    return null
+  }
+
+  if (!Array.isArray(payload.votes)) {
+    return []
+  }
+
+  const hints: WolfVoteHint[] = []
+
+  payload.votes.forEach((rawVote) => {
+    if (!isRecord(rawVote)) {
+      return
+    }
+
+    const wolfId = readString(rawVote.wolfId)
+    const wolfName = readString(rawVote.wolfName)
+    const targetId = readString(rawVote.targetId)
+    const targetName = readString(rawVote.targetName)
+
+    if (!wolfId || !wolfName || !targetId || !targetName) {
+      return
+    }
+
+    hints.push({
+      wolfId,
+      wolfName,
+      targetId,
+      targetName
+    })
+  })
+
+  return hints
 }
 
 type ParsedServerEvent = {
@@ -308,6 +421,7 @@ export const useRealtimeGameClient = (
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
   const countdownTimerRef = useRef<number | null>(null)
+  const voteCountdownTimerRef = useRef<number | null>(null)
 
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>('IDLE')
@@ -316,8 +430,13 @@ export const useRealtimeGameClient = (
   })
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null)
   const [roleInfo, setRoleInfo] = useState<RoleInfo | null>(null)
+  const [seerChecks, setSeerChecks] = useState<SeerCheckRecord[]>([])
+  const [wolfVoteHints, setWolfVoteHints] = useState<WolfVoteHint[]>([])
+  const [pendingSeerResult, setPendingSeerResult] =
+    useState<SeerCheckRecord | null>(null)
   const [dayDeaths, setDayDeaths] = useState<DayDeath[]>([])
   const [voteResult, setVoteResult] = useState<VoteResultInfo | null>(null)
+  const [voteCountdownSec, setVoteCountdownSec] = useState<number | null>(null)
   const [gameOverInfo, setGameOverInfo] = useState<GameOverInfo | null>(null)
   const [pendingDisconnects, setPendingDisconnects] = useState<
     DisconnectNotice[]
@@ -344,8 +463,19 @@ export const useRealtimeGameClient = (
     }
   }, [])
 
+  const clearVoteCountdownTimer = useCallback(() => {
+    if (voteCountdownTimerRef.current !== null) {
+      window.clearInterval(voteCountdownTimerRef.current)
+      voteCountdownTimerRef.current = null
+    }
+  }, [])
+
   const clearErrorMessage = useCallback(() => {
     setErrorMessage(null)
+  }, [])
+
+  const dismissSeerResult = useCallback(() => {
+    setPendingSeerResult(null)
   }, [])
 
   const disposeSocket = useCallback(() => {
@@ -367,8 +497,12 @@ export const useRealtimeGameClient = (
     setSession(null)
     setSnapshot(null)
     setRoleInfo(null)
+    setSeerChecks([])
+    setWolfVoteHints([])
+    setPendingSeerResult(null)
     setDayDeaths([])
     setVoteResult(null)
+    setVoteCountdownSec(null)
     setGameOverInfo(null)
     setPendingDisconnects([])
     setJoinRejectedByRunning(false)
@@ -429,6 +563,38 @@ export const useRealtimeGameClient = (
       if (serverEvent.event === SERVER_WS_EVENTS.gameNightAction) {
         const title = readString(payload.title)
         const summary = readString(payload.summary)
+        const seerResult = parseSeerCheckRecord(payload)
+        const wolfSyncHints = parseWolfVoteHints(payload)
+
+        if (seerResult) {
+          setSeerChecks((current) => {
+            const duplicated = current.some((item) => {
+              return (
+                item.targetId === seerResult.targetId &&
+                item.round === seerResult.round &&
+                item.checkedAt === seerResult.checkedAt
+              )
+            })
+
+            if (duplicated) {
+              return current
+            }
+
+            return [seerResult, ...current]
+          })
+          setPendingSeerResult(seerResult)
+          return
+        }
+
+        if (wolfSyncHints) {
+          setWolfVoteHints(wolfSyncHints)
+          return
+        }
+
+        if (title === 'WOLF_RESELECT' && summary) {
+          setInfoMessage(summary)
+          return
+        }
 
         if (title === 'HELP' && summary) {
           setRemoteHelpSummary(summary)
@@ -447,6 +613,29 @@ export const useRealtimeGameClient = (
         if (nextVoteResult) {
           setVoteResult(nextVoteResult)
         }
+        return
+      }
+
+      if (serverEvent.event === SERVER_WS_EVENTS.gamePhaseTimer) {
+        const scope = readString(payload.scope)
+        const deadlineAt = readNumber(payload.deadlineAt)
+
+        if (scope !== 'VOTE' || deadlineAt === null) {
+          return
+        }
+
+        clearVoteCountdownTimer()
+        const updateCountdown = () => {
+          const remain = Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000))
+          setVoteCountdownSec(remain)
+
+          if (remain <= 0) {
+            clearVoteCountdownTimer()
+          }
+        }
+
+        updateCountdown()
+        voteCountdownTimerRef.current = window.setInterval(updateCountdown, 250)
         return
       }
 
@@ -495,7 +684,7 @@ export const useRealtimeGameClient = (
         setErrorMessage(`[${code}] ${message}`)
       }
     },
-    [resetSessionScopedState]
+    [clearVoteCountdownTimer, resetSessionScopedState]
   )
 
   const connectSocket = useCallback(
@@ -618,6 +807,9 @@ export const useRealtimeGameClient = (
 
         setSession(result.data)
         setJoinRejectedByRunning(false)
+        setSeerChecks([])
+        setWolfVoteHints([])
+        setPendingSeerResult(null)
         setDayDeaths([])
         setVoteResult(null)
         setGameOverInfo(null)
@@ -715,8 +907,15 @@ export const useRealtimeGameClient = (
 
     clearReconnectTimer()
     clearCountdownTimer()
+    clearVoteCountdownTimer()
     disposeSocket()
-  }, [clearCountdownTimer, clearReconnectTimer, disposeSocket, enabled])
+  }, [
+    clearCountdownTimer,
+    clearReconnectTimer,
+    clearVoteCountdownTimer,
+    disposeSocket,
+    enabled
+  ])
 
   useEffect(() => {
     if (!enabled || connectionStatus !== 'DISCONNECTED') {
@@ -749,6 +948,23 @@ export const useRealtimeGameClient = (
   }, [connectionStatus, connectSocket, enabled, session])
 
   useEffect(() => {
+    if (snapshot?.phase === 'NIGHT_WOLF') {
+      return
+    }
+
+    setWolfVoteHints([])
+  }, [snapshot?.phase])
+
+  useEffect(() => {
+    if (snapshot?.phase === 'DAY_VOTE' || snapshot?.phase === 'DAY_REVOTE') {
+      return
+    }
+
+    clearVoteCountdownTimer()
+    setVoteCountdownSec(null)
+  }, [clearVoteCountdownTimer, snapshot?.phase])
+
+  useEffect(() => {
     if (!enabled || connectionStatus !== 'DISCONNECTED' || !session) {
       clearReconnectTimer()
       return
@@ -768,9 +984,10 @@ export const useRealtimeGameClient = (
     return () => {
       clearReconnectTimer()
       clearCountdownTimer()
+      clearVoteCountdownTimer()
       disposeSocket()
     }
-  }, [clearCountdownTimer, clearReconnectTimer, disposeSocket])
+  }, [clearCountdownTimer, clearReconnectTimer, clearVoteCountdownTimer, disposeSocket])
 
   const currentView: MainView = useMemo(() => {
     return resolveMainView({
@@ -789,8 +1006,12 @@ export const useRealtimeGameClient = (
     session,
     snapshot,
     roleInfo,
+    seerChecks,
+    wolfVoteHints,
+    pendingSeerResult,
     dayDeaths,
     voteResult,
+    voteCountdownSec,
     gameOverInfo,
     pendingDisconnects,
     disconnectCountdownSec,
@@ -799,6 +1020,7 @@ export const useRealtimeGameClient = (
     remoteHelpSummary,
     currentView,
     clearErrorMessage,
+    dismissSeerResult,
     joinGame,
     manualReconnect,
     requestHelp,

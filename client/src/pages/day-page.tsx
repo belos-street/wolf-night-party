@@ -27,6 +27,7 @@ interface DayPageProps {
   deaths: DayDeath[]
   voteResult: VoteResultInfo | null
   canSubmitVote: boolean
+  voteCountdownSec: number | null
   canAdvancePhase: boolean
   disabledHint: string
   onAdvancePhase: () => void
@@ -42,6 +43,7 @@ export const DayPage = ({
   deaths,
   voteResult,
   canSubmitVote,
+  voteCountdownSec,
   canAdvancePhase,
   disabledHint,
   onAdvancePhase,
@@ -51,6 +53,7 @@ export const DayPage = ({
   const [selectedTargetId, setSelectedTargetId] = useState<string | 'abstain' | null>(
     null
   )
+  const [voteSubmitted, setVoteSubmitted] = useState(false)
 
   const isHunterPhase =
     phase === 'DAY_HUNTER_NIGHT' || phase === 'DAY_HUNTER_VOTE'
@@ -64,7 +67,10 @@ export const DayPage = ({
   }, [players, selfPlayerId])
 
   const voteTargets = useMemo(() => {
-    return players.filter((player) => player.alive)
+    return players.filter((player) => player.alive && player.id !== selfPlayerId)
+  }, [players, selfPlayerId])
+  const playerNameById = useMemo(() => {
+    return new Map(players.map((player) => [player.id, player.nickname]))
   }, [players])
 
   const title = dayPhaseTitleMap[phase] ?? '☀️ 白天阶段'
@@ -96,9 +102,8 @@ export const DayPage = ({
           <h3 className="panel-title">昨夜死亡</h3>
           <ul className="rule-list">
             {deaths.map((death) => (
-              <li key={`${death.playerId}_${death.cause ?? 'unknown'}`}>
-                {death.playerId}
-                {death.cause ? `（${death.cause}）` : ''}
+              <li key={death.playerId}>
+                {playerNameById.get(death.playerId) ?? death.playerId}
               </li>
             ))}
           </ul>
@@ -175,23 +180,28 @@ export const DayPage = ({
                 className={`target ${selectedTargetId === player.id ? 'selected' : ''}`}
                 type="button"
                 onClick={() => setSelectedTargetId(player.id)}
-                disabled={!canSubmitVote || !isSelfAlive}>
+                disabled={!canSubmitVote || !isSelfAlive || voteSubmitted}>
                 {player.nickname}
               </button>
             ))}
           </div>
+          {voteCountdownSec !== null ? (
+            <p className="meta">投票倒计时：{voteCountdownSec}s</p>
+          ) : null}
           <button
             className={`btn btn-ghost ${selectedTargetId === 'abstain' ? 'selected' : ''}`}
             type="button"
-            disabled={!canSubmitVote || !isSelfAlive}
+            disabled={!canSubmitVote || !isSelfAlive || voteSubmitted}
             onClick={() => setSelectedTargetId('abstain')}>
             弃票
           </button>
           <button
             className="btn btn-primary"
             type="button"
-            disabled={!canSubmitVote || !selectedTargetId || !isSelfAlive}
+            disabled={!canSubmitVote || !selectedTargetId || !isSelfAlive || voteSubmitted}
             onClick={() => {
+              setVoteSubmitted(true)
+
               if (selectedTargetId === 'abstain') {
                 onSubmitVote('abstain')
                 return
@@ -203,6 +213,9 @@ export const DayPage = ({
             }}>
             提交投票
           </button>
+          {voteSubmitted ? (
+            <p className="meta">你已提交本轮投票，等待其他玩家。</p>
+          ) : null}
           {!canSubmitVote ? <p className="disabled-hint">{disabledHint}</p> : null}
         </article>
       ) : null}

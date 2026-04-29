@@ -12,6 +12,8 @@ import type {
   MainView,
   PlayerPublicSnapshot,
   RoleInfo,
+  SeerCheckRecord,
+  WolfVoteHint,
   VoteResultInfo
 } from '../types/game-ui'
 
@@ -79,6 +81,14 @@ const nextNightPhase = (phase: string): string => {
   return 'DAY_REVEAL'
 }
 
+const inferMockAlignment = (targetId: string): 'GOOD' | 'WOLF' => {
+  const sum = targetId.split('').reduce((total, character) => {
+    return total + character.charCodeAt(0)
+  }, 0)
+
+  return sum % 3 === 0 ? 'WOLF' : 'GOOD'
+}
+
 export const useMockGameClient = () => {
   const mockRole = useMemo(() => resolveMockRolePreference(), [])
 
@@ -87,8 +97,13 @@ export const useMockGameClient = () => {
   const [session, setSession] = useState<JoinResponse | null>(null)
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null)
   const [roleInfo, setRoleInfo] = useState<RoleInfo | null>(null)
+  const [seerChecks, setSeerChecks] = useState<SeerCheckRecord[]>([])
+  const [wolfVoteHints, setWolfVoteHints] = useState<WolfVoteHint[]>([])
+  const [pendingSeerResult, setPendingSeerResult] =
+    useState<SeerCheckRecord | null>(null)
   const [dayDeaths, setDayDeaths] = useState<DayDeath[]>([])
   const [voteResult, setVoteResult] = useState<VoteResultInfo | null>(null)
+  const [voteCountdownSec] = useState<number | null>(null)
   const [gameOverInfo, setGameOverInfo] = useState<GameOverInfo | null>(null)
   const [pendingDisconnects, setPendingDisconnects] = useState<
     DisconnectNotice[]
@@ -104,6 +119,10 @@ export const useMockGameClient = () => {
 
   const clearErrorMessage = useCallback(() => {
     setErrorMessage(null)
+  }, [])
+
+  const dismissSeerResult = useCallback(() => {
+    setPendingSeerResult(null)
   }, [])
 
   const safeSetPhase = useCallback((phase: string) => {
@@ -253,6 +272,14 @@ export const useMockGameClient = () => {
     }
   }, [autoAdvanceHunterPhase, autoAdvanceNight, roleInfo, snapshot])
 
+  useEffect(() => {
+    if (snapshot?.phase === 'NIGHT_WOLF') {
+      return
+    }
+
+    setWolfVoteHints([])
+  }, [snapshot?.phase])
+
   const joinGame = useCallback(
     async (nickname: string) => {
       const normalizedNickname = nickname.trim()
@@ -303,6 +330,9 @@ export const useMockGameClient = () => {
         players
       })
       setRoleInfo(null)
+      setSeerChecks([])
+      setWolfVoteHints([])
+      setPendingSeerResult(null)
       setDayDeaths([])
       setVoteResult(null)
       setGameOverInfo(null)
@@ -341,6 +371,9 @@ export const useMockGameClient = () => {
       }
     })
     setRoleInfo(toRoleInfo(mockRole))
+    setSeerChecks([])
+    setWolfVoteHints([])
+    setPendingSeerResult(null)
     setVoteResult(null)
     setDayDeaths([])
     setInfoMessage('Mock 模式：已开始游戏。')
@@ -391,19 +424,48 @@ export const useMockGameClient = () => {
 
   const submitWolfKill = useCallback(
     (targetId: string) => {
+      const selfWolf = snapshot?.players.find((player) => player.id === session?.playerId)
+      const target = snapshot?.players.find((player) => player.id === targetId)
+
+      if (selfWolf && target) {
+        setWolfVoteHints([
+          {
+            wolfId: selfWolf.id,
+            wolfName: selfWolf.nickname,
+            targetId: target.id,
+            targetName: target.nickname
+          }
+        ])
+      }
+
       wolfTargetRef.current = targetId
       safeSetPhase('NIGHT_SEER')
       setInfoMessage('Mock 模式：狼人已提交刀人。')
     },
-    [safeSetPhase]
+    [safeSetPhase, session?.playerId, snapshot?.players]
   )
 
   const submitSeerCheck = useCallback(
     (targetId: string) => {
+      const targetPlayer = snapshot?.players.find((player) => player.id === targetId)
+      const seerResult: SeerCheckRecord = {
+        targetId,
+        targetName: targetPlayer?.nickname ?? targetId,
+        alignment: inferMockAlignment(targetId),
+        round: dayRound,
+        checkedAt: Date.now()
+      }
+
+      setSeerChecks((current) => [seerResult, ...current])
+      setPendingSeerResult(seerResult)
       safeSetPhase('NIGHT_GUARD')
-      setInfoMessage(`Mock 模式：预言家已查验 ${targetId}。`)
+      setInfoMessage(
+        `Mock 模式：预言家查验 ${seerResult.targetName} 为 ${
+          seerResult.alignment === 'WOLF' ? '狼人' : '好人'
+        }。`
+      )
     },
-    [safeSetPhase]
+    [dayRound, safeSetPhase, snapshot?.players]
   )
 
   const submitGuardProtect = useCallback(
@@ -462,11 +524,28 @@ export const useMockGameClient = () => {
 
       setVoteResult({
         eliminatedId: targetId === 'abstain' ? null : targetId,
-        isTie: targetId === 'abstain'
+        isTie: targetId === 'abstain',
+        roundNo: 1,
+        ballots: session
+          ? [
+              {
+                voterId: session.playerId,
+                voterName:
+                  snapshot?.players.find((player) => player.id === session.playerId)
+                    ?.nickname ?? '你',
+                targetId: targetId === 'abstain' ? null : targetId,
+                targetName:
+                  targetId === 'abstain'
+                    ? null
+                    : snapshot?.players.find((player) => player.id === targetId)?.nickname ??
+                      null
+              }
+            ]
+          : []
       })
       setInfoMessage('Mock 模式：投票已提交。')
     },
-    []
+    [session, snapshot?.players]
   )
 
   const submitHunterShot = useCallback((targetId: string | null) => {
@@ -524,8 +603,12 @@ export const useMockGameClient = () => {
     session,
     snapshot,
     roleInfo,
+    seerChecks,
+    wolfVoteHints,
+    pendingSeerResult,
     dayDeaths,
     voteResult,
+    voteCountdownSec,
     gameOverInfo,
     pendingDisconnects,
     disconnectCountdownSec,
@@ -534,6 +617,7 @@ export const useMockGameClient = () => {
     remoteHelpSummary,
     currentView,
     clearErrorMessage,
+    dismissSeerResult,
     joinGame,
     manualReconnect,
     requestHelp,

@@ -36,6 +36,12 @@ const BUSINESS_ERROR_MAP: Record<string, HttpErrorDescriptor> = {
     statusCode: 409,
     message: 'Room player limit reached',
     retryable: false
+  },
+  NICKNAME_DUPLICATE: {
+    code: 'NICKNAME_DUPLICATE',
+    statusCode: 409,
+    message: 'Nickname already exists in room',
+    retryable: true
   }
 }
 

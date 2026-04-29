@@ -153,6 +153,33 @@ test('guard protection blocks wolf kill during night resolve', () => {
   assert.equal(state.deadPlayers.length, 0)
 })
 
+test('wolf target mismatch resets night wolf votes and requires reselection', () => {
+  const joinedPlayers = createPlayers(8)
+  const sessionMap = createSessionMap(joinedPlayers)
+
+  startGameBySessionToken(joinedPlayers[0].sessionToken, () => 0)
+  confirmAllRoles(joinedPlayers)
+
+  const state = getRoomState()
+  const wolves = state.players.filter((player) => player.role === 'WOLF')
+  const villagerTargets = state.players.filter((player) => player.role === 'VILLAGER')
+
+  assert.equal(state.phase, GAME_PHASES.nightWolf)
+  assert.equal(wolves.length >= 2, true)
+  assert.equal(villagerTargets.length >= 2, true)
+
+  submitWolfKillBySessionToken(sessionMap.get(wolves[0].id)!, villagerTargets[0].id)
+  submitWolfKillBySessionToken(sessionMap.get(wolves[1].id)!, villagerTargets[1].id)
+
+  assert.equal(state.phase, GAME_PHASES.nightWolf)
+  assert.equal(Object.keys(state.nightActionState?.wolfVotes ?? {}).length, 0)
+
+  submitWolfKillBySessionToken(sessionMap.get(wolves[0].id)!, villagerTargets[0].id)
+  submitWolfKillBySessionToken(sessionMap.get(wolves[1].id)!, villagerTargets[0].id)
+
+  assert.equal(state.phase, GAME_PHASES.nightSeer)
+})
+
 test('vote tie then revote tie leads to no elimination and next night', () => {
   const joinedPlayers = createPlayers(7)
   const sessionMap = createSessionMap(joinedPlayers)
@@ -169,14 +196,26 @@ test('vote tie then revote tie leads to no elimination and next night', () => {
   const candidateB = voters[1].id
 
   voters.forEach((voter, index) => {
-    const targetId = index % 2 === 0 ? candidateA : candidateB
+    const preferredTargetId = index % 2 === 0 ? candidateA : candidateB
+    const targetId =
+      preferredTargetId === voter.id
+        ? preferredTargetId === candidateA
+          ? candidateB
+          : candidateA
+        : preferredTargetId
     submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targetId)
   })
 
   assert.equal(state.phase, GAME_PHASES.dayRevote)
 
   voters.forEach((voter, index) => {
-    const targetId = index % 2 === 0 ? candidateA : candidateB
+    const preferredTargetId = index % 2 === 0 ? candidateA : candidateB
+    const targetId =
+      preferredTargetId === voter.id
+        ? preferredTargetId === candidateA
+          ? candidateB
+          : candidateA
+        : preferredTargetId
     submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targetId)
   })
 
@@ -187,6 +226,45 @@ test('vote tie then revote tie leads to no elimination and next night', () => {
 
   assert.equal(state.phase, GAME_PHASES.nightWolf)
   assert.equal(state.round, 2)
+})
+
+test('day vote cannot be changed after submission', () => {
+  const joinedPlayers = createPlayers(7)
+  const sessionMap = createSessionMap(joinedPlayers)
+
+  startGameBySessionToken(joinedPlayers[0].sessionToken, () => 0)
+  confirmAllRoles(joinedPlayers)
+  fastForwardToDayVote()
+
+  const state = getRoomState()
+  const voter = state.players.find((player) => player.alive && player.canVote)
+  const targets = state.players.filter((player) => player.alive && player.id !== voter?.id)
+
+  assert.ok(voter)
+  assert.equal(targets.length >= 2, true)
+
+  submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targets[0].id)
+  assert.throws(() => {
+    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targets[1].id)
+  }, /ALREADY_SUBMITTED/)
+})
+
+test('day vote cannot target self', () => {
+  const joinedPlayers = createPlayers(7)
+  const sessionMap = createSessionMap(joinedPlayers)
+
+  startGameBySessionToken(joinedPlayers[0].sessionToken, () => 0)
+  confirmAllRoles(joinedPlayers)
+  fastForwardToDayVote()
+
+  const state = getRoomState()
+  const voter = state.players.find((player) => player.alive && player.canVote)
+
+  assert.ok(voter)
+
+  assert.throws(() => {
+    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, voter.id)
+  }, /INVALID_TARGET/)
 })
 
 test('idiot survives vote elimination and loses voting right', () => {
@@ -206,7 +284,8 @@ test('idiot survives vote elimination and loses voting right', () => {
   )
 
   voters.forEach((voter) => {
-    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, idiot.id)
+    const targetId = voter.id === idiot.id ? 'abstain' : idiot.id
+    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targetId)
   })
 
   assert.equal(state.phase, GAME_PHASES.dayIdiotReveal)
@@ -235,7 +314,8 @@ test('hunter vote elimination triggers hunter shot phase', () => {
     (player) => player.alive && player.canVote
   )
   voters.forEach((voter) => {
-    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, hunter.id)
+    const targetId = voter.id === hunter.id ? 'abstain' : hunter.id
+    submitDayVoteBySessionToken(sessionMap.get(voter.id)!, targetId)
   })
 
   assert.equal(state.phase, GAME_PHASES.dayHunterVote)

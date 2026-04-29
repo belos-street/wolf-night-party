@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react'
 
-import type { PlayerPublicSnapshot, RoleInfo } from '../types/game-ui'
+import type {
+  PlayerPublicSnapshot,
+  RoleInfo,
+  WolfVoteHint
+} from '../types/game-ui'
 
 const nightPhaseTitleMap: Record<string, string> = {
   NIGHT_WOLF: '🐺 狼人行动',
@@ -23,6 +27,7 @@ interface NightPageProps {
   phase: string
   players: PlayerPublicSnapshot[]
   roleInfo: RoleInfo | null
+  wolfVoteHints: WolfVoteHint[]
   selfPlayerId: string
   disabledHint: string
   onSubmitWolfKill: (targetId: string) => void
@@ -35,6 +40,7 @@ export const NightPage = ({
   phase,
   players,
   roleInfo,
+  wolfVoteHints,
   selfPlayerId,
   disabledHint,
   onSubmitWolfKill,
@@ -137,6 +143,8 @@ export const NightPage = ({
     return Boolean(selectedTargetId)
   })()
 
+  const isWolfPhaseForSelf = phase === 'NIGHT_WOLF' && roleInfo?.role === 'WOLF'
+
   return (
     <section className="screen">
       <article className="panel stack">
@@ -147,6 +155,23 @@ export const NightPage = ({
       </article>
 
       <article className="panel stack">
+        {isWolfPhaseForSelf ? (
+          <article className="panel panel-inner stack">
+            <h3 className="panel-title">🐺 队友刀口同步</h3>
+            {wolfVoteHints.length === 0 ? (
+              <p className="muted">暂未收到队友提交，等待中。</p>
+            ) : (
+              <ul className="rule-list">
+                {wolfVoteHints.map((hint) => (
+                  <li key={`${hint.wolfId}_${hint.targetId}`}>
+                    {hint.wolfName} {'->'} {hint.targetName}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
+        ) : null}
+
         {phase === 'NIGHT_WITCH' && isSelfTurn ? (
           <>
             <label className="option-row">

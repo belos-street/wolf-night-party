@@ -243,6 +243,7 @@ const startVoteRound = (
     candidates: voteCandidates,
     ballots: {}
   }
+  state.lastVoteBallots = null
 
   setPhase(state, roundNo === 1 ? GAME_PHASES.dayVote : GAME_PHASES.dayRevote)
 
@@ -260,6 +261,7 @@ const beginNightCycle = (state: InternalRoomState, isNextRound: boolean) => {
   state.voteActionState = null
   state.hunterActionState = null
   state.lastVoteResult = null
+  state.lastVoteBallots = null
   setPhase(state, GAME_PHASES.nightWolf)
 }
 
@@ -297,12 +299,16 @@ const moveToNextNightFromDay = (state: InternalRoomState) => {
   }
 }
 
-const handleVoteElimination = (state: InternalRoomState, targetId: string) => {
+const handleVoteElimination = (
+  state: InternalRoomState,
+  targetId: string,
+  roundNo: 1 | 2
+) => {
   const target = validateAlivePlayer(state, targetId)
   state.lastVoteResult = {
     eliminatedId: target.id,
     isTie: false,
-    roundNo: state.voteActionState?.roundNo ?? 1
+    roundNo
   }
 
   if (target.role === 'IDIOT') {
@@ -335,6 +341,8 @@ const finalizeVoteRound = (state: InternalRoomState) => {
   if (!voteState) {
     throw new Error('VOTE_NOT_STARTED')
   }
+
+  const finalizedBallots = { ...voteState.ballots }
 
   const tally = new Map<string, number>()
 
@@ -375,6 +383,7 @@ const finalizeVoteRound = (state: InternalRoomState) => {
     }
 
     state.voteActionState = null
+    state.lastVoteBallots = finalizedBallots
     state.lastVoteResult = {
       eliminatedId: null,
       isTie: true,
@@ -385,7 +394,8 @@ const finalizeVoteRound = (state: InternalRoomState) => {
   }
 
   state.voteActionState = null
-  handleVoteElimination(state, topCandidates[0])
+  state.lastVoteBallots = finalizedBallots
+  handleVoteElimination(state, topCandidates[0], voteState.roundNo)
 }
 
 const resolveNight = (state: InternalRoomState) => {
@@ -521,6 +531,7 @@ export const startGame = (
   }
   state.lastGuardTargetId = null
   state.lastVoteResult = null
+  state.lastVoteBallots = null
   state.gameResult = null
 
   setPhase(state, GAME_PHASES.roleAssignment)
@@ -577,6 +588,15 @@ export const submitWolfKill = (
   })
 
   if (allWolvesSubmitted) {
+    const selectedTargetIds = Object.values(state.nightActionState.wolfVotes)
+    const uniqueTargetCount = new Set(selectedTargetIds).size
+
+    if (uniqueTargetCount > 1) {
+      // Wolves voted for different targets, force a full re-selection for fairness.
+      state.nightActionState.wolfVotes = {}
+      return
+    }
+
     moveAfterWolfPhase(state)
   }
 }
@@ -738,7 +758,15 @@ export const submitDayVote = (
     throw new Error('VOTE_NOT_STARTED')
   }
 
+  if (state.voteActionState.ballots[playerId]) {
+    throw new Error('ALREADY_SUBMITTED')
+  }
+
   if (targetId !== 'abstain') {
+    if (targetId === playerId) {
+      throw new Error('INVALID_TARGET')
+    }
+
     validateAlivePlayer(state, targetId)
 
     if (
