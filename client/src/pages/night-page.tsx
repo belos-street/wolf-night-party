@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type {
   PlayerPublicSnapshot,
   RoleInfo,
+  WitchKillHintRecord,
+  WitchOptions,
   WolfVoteHint
 } from '../types/game-ui'
 
@@ -28,12 +30,17 @@ interface NightPageProps {
   players: PlayerPublicSnapshot[]
   roleInfo: RoleInfo | null
   wolfVoteHints: WolfVoteHint[]
+  latestWitchKillHint: WitchKillHintRecord | null
+  witchOptions: WitchOptions | null
   selfPlayerId: string
+  isSelfAlive: boolean
+  canAdvanceWhenDead: boolean
   disabledHint: string
   onSubmitWolfKill: (targetId: string) => void
   onSubmitSeerCheck: (targetId: string) => void
   onSubmitGuardProtect: (targetId: string) => void
   onSubmitWitchAction: (action: WitchAction, targetId?: string) => void
+  onAdvancePhase: () => void
 }
 
 export const NightPage = ({
@@ -41,12 +48,17 @@ export const NightPage = ({
   players,
   roleInfo,
   wolfVoteHints,
+  latestWitchKillHint,
+  witchOptions,
   selfPlayerId,
+  isSelfAlive,
+  canAdvanceWhenDead,
   disabledHint,
   onSubmitWolfKill,
   onSubmitSeerCheck,
   onSubmitGuardProtect,
-  onSubmitWitchAction
+  onSubmitWitchAction,
+  onAdvancePhase
 }: NightPageProps) => {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   const [witchAction, setWitchAction] = useState<WitchAction>('skip')
@@ -61,13 +73,46 @@ export const NightPage = ({
         return false
       }
 
-      if (phase === 'NIGHT_WOLF') {
+      if (phase === 'NIGHT_SEER') {
+        return player.id !== selfPlayerId
+      }
+
+      if (phase === 'NIGHT_WITCH' && witchAction === 'poison') {
         return player.id !== selfPlayerId
       }
 
       return true
     })
-  }, [phase, players, selfPlayerId])
+  }, [phase, players, selfPlayerId, witchAction])
+
+  const selectableTargetIds = useMemo(() => {
+    return new Set(actionTargets.map((player) => player.id))
+  }, [actionTargets])
+
+  useEffect(() => {
+    if (!selectedTargetId) {
+      return
+    }
+
+    if (!selectableTargetIds.has(selectedTargetId)) {
+      setSelectedTargetId(null)
+    }
+  }, [selectableTargetIds, selectedTargetId])
+
+  useEffect(() => {
+    if (phase !== 'NIGHT_WITCH') {
+      return
+    }
+
+    if (witchAction === 'save' && witchOptions && !witchOptions.canSave) {
+      setWitchAction('skip')
+      return
+    }
+
+    if (witchAction === 'poison' && witchOptions && !witchOptions.canPoison) {
+      setWitchAction('skip')
+    }
+  }, [phase, witchAction, witchOptions])
 
   const handleSubmitNightAction = () => {
     if (!isSelfTurn) {
@@ -90,6 +135,11 @@ export const NightPage = ({
     }
 
     if (!selectedTargetId) {
+      return
+    }
+
+    if (!selectableTargetIds.has(selectedTargetId)) {
+      setSelectedTargetId(null)
       return
     }
 
@@ -129,21 +179,36 @@ export const NightPage = ({
   })()
 
   const canSubmit = (() => {
+    if (!isSelfAlive) {
+      return false
+    }
+
     if (!isSelfTurn) {
       return false
     }
 
     if (phase === 'NIGHT_WITCH') {
       if (witchAction === 'poison') {
+        if (witchOptions && !witchOptions.canPoison) {
+          return false
+        }
+
         return Boolean(selectedTargetId)
       }
+
+      if (witchAction === 'save') {
+        return witchOptions ? witchOptions.canSave : true
+      }
+
       return true
     }
 
-    return Boolean(selectedTargetId)
+    return Boolean(selectedTargetId && selectableTargetIds.has(selectedTargetId))
   })()
 
   const isWolfPhaseForSelf = phase === 'NIGHT_WOLF' && roleInfo?.role === 'WOLF'
+  const canUseSave = witchOptions ? witchOptions.canSave : true
+  const canUsePoison = witchOptions ? witchOptions.canPoison : true
 
   return (
     <section className="screen">
@@ -174,21 +239,52 @@ export const NightPage = ({
 
         {phase === 'NIGHT_WITCH' && isSelfTurn ? (
           <>
+            <article className="panel panel-inner stack">
+              <h3 className="panel-title">🧪 今夜刀口提示</h3>
+              {latestWitchKillHint ? (
+                <p>
+                  昨夜被刀：{latestWitchKillHint.targetName}（第 {latestWitchKillHint.round} 夜）
+                </p>
+              ) : (
+                <p className="muted">暂未收到刀口信息。</p>
+              )}
+            </article>
             <label className="option-row">
-              <input
-                type="radio"
-                checked={witchAction === 'save'}
-                onChange={() => setWitchAction('save')}
-              />
-              使用解药
+              {canUseSave ? (
+                <>
+                  <input
+                    type="radio"
+                    checked={witchAction === 'save'}
+                    onChange={() => setWitchAction('save')}
+                  />
+                  使用解药
+                </>
+              ) : (
+                <>
+                  <input type="radio" checked={false} disabled />
+                  <span className="muted">
+                    解药不可用
+                    {witchOptions?.isSelfTargeted ? '（第二夜起不能自救）' : ''}
+                  </span>
+                </>
+              )}
             </label>
             <label className="option-row">
-              <input
-                type="radio"
-                checked={witchAction === 'poison'}
-                onChange={() => setWitchAction('poison')}
-              />
-              使用毒药（需选目标）
+              {canUsePoison ? (
+                <>
+                  <input
+                    type="radio"
+                    checked={witchAction === 'poison'}
+                    onChange={() => setWitchAction('poison')}
+                  />
+                  使用毒药（需选目标）
+                </>
+              ) : (
+                <>
+                  <input type="radio" checked={false} disabled />
+                  <span className="muted">毒药不可用</span>
+                </>
+              )}
             </label>
             <label className="option-row">
               <input
@@ -201,27 +297,41 @@ export const NightPage = ({
           </>
         ) : null}
 
-        <div className="target-grid">
-          {actionTargets.map((player) => (
-            <button
-              key={player.id}
-              className={`target ${selectedTargetId === player.id ? 'selected' : ''}`}
-              type="button"
-              onClick={() => setSelectedTargetId(player.id)}
-              disabled={!isSelfTurn}>
-              {player.nickname}
-            </button>
-          ))}
-        </div>
+        {isSelfAlive ? (
+          <>
+            <div className="target-grid">
+              {actionTargets.map((player) => (
+                <button
+                  key={player.id}
+                  className={`target ${selectedTargetId === player.id ? 'selected' : ''}`}
+                  type="button"
+                  onClick={() => setSelectedTargetId(player.id)}
+                  disabled={!isSelfTurn}>
+                  {player.nickname}
+                </button>
+              ))}
+            </div>
 
-        <button
-          className="btn btn-primary"
-          type="button"
-          disabled={!canSubmit}
-          onClick={handleSubmitNightAction}>
-          {buttonLabel}
-        </button>
-        {!canSubmit ? <p className="disabled-hint">{disabledHint}</p> : null}
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={!canSubmit}
+              onClick={handleSubmitNightAction}>
+              {buttonLabel}
+            </button>
+            {!canSubmit ? <p className="disabled-hint">{disabledHint}</p> : null}
+          </>
+        ) : (
+          <article className="panel panel-inner stack">
+            <h3 className="panel-title">你已死亡</h3>
+            <p className="muted">已死亡玩家不能执行夜晚技能。</p>
+            {canAdvanceWhenDead ? (
+              <button className="btn btn-primary" type="button" onClick={onAdvancePhase}>
+                主机推进到下一步
+              </button>
+            ) : null}
+          </article>
+        )}
       </article>
     </section>
   )

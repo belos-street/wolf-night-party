@@ -3,6 +3,10 @@ import type { GameOverInfo, GameSnapshot } from '../types/game-ui'
 interface EndPageProps {
   snapshot: GameSnapshot
   gameOverInfo: GameOverInfo | null
+  canStartNewGame: boolean
+  startDisabledReason: string | null
+  isHost: boolean
+  onStartNewGame: () => void
 }
 
 const winnerLabelMap: Record<string, string> = {
@@ -10,7 +14,14 @@ const winnerLabelMap: Record<string, string> = {
   WOLF: '狼人阵营胜利'
 }
 
-export const EndPage = ({ snapshot, gameOverInfo }: EndPageProps) => {
+export const EndPage = ({
+  snapshot,
+  gameOverInfo,
+  canStartNewGame,
+  startDisabledReason,
+  isHost,
+  onStartNewGame
+}: EndPageProps) => {
   const playerNameById = new Map(
     snapshot.players.map((player) => [player.id, player.nickname])
   )
@@ -40,6 +51,16 @@ export const EndPage = ({ snapshot, gameOverInfo }: EndPageProps) => {
 
       <article className="panel">
         <p className="meta">最终阶段：{snapshot.phase}</p>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={onStartNewGame}
+          disabled={!canStartNewGame}>
+          开始新的一局
+        </button>
+        {!canStartNewGame ? (
+          <p className="muted">{startDisabledReason ?? (isHost ? '当前不可开始。' : '仅主机可开始新一局。')}</p>
+        ) : null}
       </article>
     </section>
   )

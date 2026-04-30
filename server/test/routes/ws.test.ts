@@ -349,7 +349,56 @@ test('ws returns phase error when action is submitted in invalid phase', async (
   assert.equal(errorEvent.payload.code, 'PHASE_MISMATCH')
 })
 
-test('only host can advance DAY_REVEAL and DAY_LAST_WORDS phases', async (t) => {
+test('dead non-host cannot force phase timeout while dead host can', async (t) => {
+  const app = await build(t)
+  await app.listen({ host: '127.0.0.1', port: 0 })
+
+  const address = app.server.address() as AddressInfo
+  const players = await joinPlayers(app, 6)
+  const sockets = await openSockets(address, players)
+
+  t.after(() => {
+    closeSockets(sockets)
+  })
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.gameStart, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'ROLE_VIEW',
+    5000,
+    () => `WAIT_ROLE_VIEW_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  sockets.forEach((socket) => {
+    sendClientEvent(socket, CLIENT_WS_EVENTS.playerConfirmRole, {})
+  })
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_WOLF',
+    5000,
+    () => `WAIT_NIGHT_WOLF_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  const roomState = getRoomState()
+  const host = roomState.players.find((player) => player.isHost)
+  const nonHost = roomState.players.find((player) => !player.isHost)
+
+  assert.ok(host)
+  assert.ok(nonHost)
+
+  nonHost.alive = false
+  sendClientEvent(sockets[1], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  const deadNonHostErrorEvent = await waitForEvent(sockets[1], SERVER_WS_EVENTS.gameError)
+  assert.equal(deadNonHostErrorEvent.payload.code, 'PLAYER_DEAD')
+
+  host.alive = false
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_SEER',
+    5000,
+    () => `WAIT_NIGHT_SEER_TIMEOUT phase=${getRoomState().phase}`
+  )
+})
+
+test('only host can advance DAY_REVEAL/DAY_LAST_WORDS/DAY_DISCUSSION/DAY_VOTE_RESULT phases', async (t) => {
   const app = await build(t)
   await app.listen({ host: '127.0.0.1', port: 0 })
 
@@ -411,6 +460,35 @@ test('only host can advance DAY_REVEAL and DAY_LAST_WORDS phases', async (t) => 
     SERVER_WS_EVENTS.gameError
   )
   assert.equal(dayLastWordsErrorEvent.payload.code, 'HOST_ONLY_ACTION')
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'DAY_DISCUSSION',
+    5000,
+    () => `WAIT_DAY_DISCUSSION_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  sendClientEvent(sockets[1], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  const dayDiscussionErrorEvent = await waitForEvent(
+    sockets[1],
+    SERVER_WS_EVENTS.gameError
+  )
+  assert.equal(dayDiscussionErrorEvent.payload.code, 'HOST_ONLY_ACTION')
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'DAY_VOTE',
+    5000,
+    () => `WAIT_DAY_VOTE_TIMEOUT phase=${getRoomState().phase}`
+  )
+  getRoomState().phase = 'DAY_VOTE_RESULT'
+
+  sendClientEvent(sockets[1], CLIENT_WS_EVENTS.playerConfirmRole, {})
+  const dayVoteResultErrorEvent = await waitForEvent(
+    sockets[1],
+    SERVER_WS_EVENTS.gameError
+  )
+  assert.equal(dayVoteResultErrorEvent.payload.code, 'HOST_ONLY_ACTION')
 })
 
 test('ws integration main path reaches day vote result', async (t) => {
@@ -513,6 +591,7 @@ test('ws integration main path reaches day vote result', async (t) => {
 
   const voteResultEvent = await voteResultEventPromise
   assert.equal(voteResultEvent.payload.roundNo, 1)
+  assert.equal(typeof voteResultEvent.payload.eliminatedName, 'string')
   assert.equal(Array.isArray(voteResultEvent.payload.ballots), true)
   assert.equal(
     (voteResultEvent.payload.ballots as unknown[]).length,
@@ -576,9 +655,9 @@ test('ws starts 10s vote countdown and auto advances vote phase on timeout', asy
   assert.equal(typeof voteTimerEvent.payload.deadlineAt, 'number')
 
   await waitForCondition(
-    () => getRoomState().phase === 'DAY_REVOTE',
+    () => getRoomState().phase === 'DAY_PK_SPEECH',
     13_000,
-    () => `WAIT_DAY_REVOTE_TIMEOUT phase=${getRoomState().phase}`
+    () => `WAIT_DAY_PK_SPEECH_TIMEOUT phase=${getRoomState().phase}`
   )
 })
 
@@ -734,4 +813,160 @@ test('ws sends wolf sync event to wolves after kill submission', async (t) => {
 
   assert.equal(Array.isArray(wolfSyncEvent.payload.votes), true)
   assert.equal((wolfSyncEvent.payload.votes as unknown[]).length > 0, true)
+})
+
+test('only host can start a new round from ENDED', async (t) => {
+  const app = await build(t)
+  await app.listen({ host: '127.0.0.1', port: 0 })
+
+  const address = app.server.address() as AddressInfo
+  const players = await joinPlayers(app, 6)
+  const sockets = await openSockets(address, players)
+
+  t.after(() => {
+    closeSockets(sockets)
+  })
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.gameStart, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'ROLE_VIEW',
+    5000,
+    () => `WAIT_ROLE_VIEW_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  const roomState = getRoomState()
+  const host = roomState.players.find((player) => player.isHost)
+  const nonHost = roomState.players.find((player) => !player.isHost)
+
+  assert.ok(host)
+  assert.ok(nonHost)
+
+  host.alive = false
+  roomState.status = 'ENDED'
+  roomState.phase = 'ENDED'
+
+  sendClientEvent(sockets[1], CLIENT_WS_EVENTS.gameStart, {})
+  const nonHostError = await waitForEvent(sockets[1], SERVER_WS_EVENTS.gameError)
+  assert.equal(nonHostError.payload.code, 'HOST_ONLY_ACTION')
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.gameStart, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'ROLE_VIEW' && getRoomState().status === 'RUNNING',
+    5000,
+    () => `WAIT_RESTART_ROLE_VIEW_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  assert.equal(getRoomState().players.every((player) => player.alive), true)
+})
+
+test('ws sends witch private wolf-target hint in NIGHT_WITCH', async (t) => {
+  const app = await build(t)
+  await app.listen({ host: '127.0.0.1', port: 0 })
+
+  const address = app.server.address() as AddressInfo
+  const players = await joinPlayers(app, 8)
+  const sockets = await openSockets(address, players)
+
+  t.after(() => {
+    closeSockets(sockets)
+  })
+
+  sendClientEvent(sockets[0], CLIENT_WS_EVENTS.gameStart, {})
+  await waitForCondition(
+    () => getRoomState().phase === 'ROLE_VIEW',
+    5000,
+    () => `WAIT_ROLE_VIEW_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  sockets.forEach((socket) => {
+    sendClientEvent(socket, CLIENT_WS_EVENTS.playerConfirmRole, {})
+  })
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_WOLF',
+    5000,
+    () => `WAIT_NIGHT_WOLF_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  const roomStateAtNightWolf = getRoomState()
+  const socketByPlayerId = new Map(
+    players.map((player, index) => [player.playerId, sockets[index]])
+  )
+  const wolves = roomStateAtNightWolf.players.filter((player) => {
+    return player.alive && player.role === 'WOLF'
+  })
+  const seer = roomStateAtNightWolf.players.find((player) => {
+    return player.alive && player.role === 'SEER'
+  })
+  const guard = roomStateAtNightWolf.players.find((player) => {
+    return player.alive && player.role === 'GUARD'
+  })
+  const witch = roomStateAtNightWolf.players.find((player) => {
+    return player.alive && player.role === 'WITCH'
+  })
+  const wolfTarget = roomStateAtNightWolf.players.find((player) => {
+    return player.alive && player.id !== witch?.id && player.role !== 'WOLF'
+  })
+
+  assert.equal(wolves.length > 0, true)
+  assert.ok(seer)
+  assert.ok(guard)
+  assert.ok(witch)
+  assert.ok(wolfTarget)
+
+  wolves.forEach((wolf) => {
+    const wolfSocket = socketByPlayerId.get(wolf.id)
+    assert.ok(wolfSocket)
+    sendClientEvent(wolfSocket, CLIENT_WS_EVENTS.nightSubmitKill, {
+      targetId: wolfTarget!.id
+    })
+  })
+
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_SEER',
+    5000,
+    () => `WAIT_NIGHT_SEER_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  const seerSocket = socketByPlayerId.get(seer.id)
+  const guardSocket = socketByPlayerId.get(guard.id)
+  assert.ok(seerSocket)
+  assert.ok(guardSocket)
+
+  sendClientEvent(seerSocket, CLIENT_WS_EVENTS.nightSubmitSeer, {
+    targetId: wolfTarget.id
+  })
+
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_GUARD',
+    5000,
+    () => `WAIT_NIGHT_GUARD_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  sendClientEvent(guardSocket, CLIENT_WS_EVENTS.nightSubmitGuard, {
+    targetId: guard.id
+  })
+
+  await waitForCondition(
+    () => getRoomState().phase === 'NIGHT_WITCH',
+    5000,
+    () => `WAIT_NIGHT_WITCH_TIMEOUT phase=${getRoomState().phase}`
+  )
+
+  const witchSocket = socketByPlayerId.get(witch.id)
+  assert.ok(witchSocket)
+
+  const witchHintEvent = await waitForMessageWhere(
+    witchSocket,
+    (event) => {
+      return (
+        event.event === SERVER_WS_EVENTS.gameNightAction &&
+        event.payload.title === 'WITCH_WOLF_TARGET'
+      )
+    },
+    5000
+  )
+
+  assert.equal(witchHintEvent.payload.targetId, wolfTarget.id)
+  assert.equal(witchHintEvent.payload.targetName, wolfTarget.nickname)
+  assert.equal(typeof witchHintEvent.payload.round, 'number')
 })

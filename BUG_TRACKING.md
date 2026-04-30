@@ -21,6 +21,19 @@
 | BUG-014 | 2026-04-29 | 投票阶段可以投自己。 | 白天投票规则 | 前端投票目标隐藏自己；服务端增加禁止自投的校验（`INVALID_TARGET`）。 | `client/src/pages/day-page.tsx`、`server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
 | BUG-015 | 2026-04-29 | 投票阶段缺少 10 秒倒计时，未投票玩家不会自动按弃票处理。 | 白天投票流程 | 服务端在 `DAY_VOTE/DAY_REVOTE` 自动启动 10 秒计时并超时结算（未投视为弃票）；前端显示倒计时。 | `server/src/routes/ws/index.ts`、`server/src/game/game-engine.ts`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/pages/day-page.tsx`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
 | BUG-016 | 2026-04-29 | 投票结束后没有集中弹窗展示每个人投给了谁。 | 白天结果可视化 | 服务端 `game:vote_result` 增加每人投票明细；前端新增投票结果 Modal 展示逐票结果。 | `server/src/routes/ws/index.ts`、`client/src/components/vote-result-modal.tsx`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/App.tsx` | Fixed | 待你复测 |
+| BUG-017 | 2026-04-29 | `DAY_DISCUSSION` 阶段应仅主机可推进。 | 白天流程控制 | `DAY_DISCUSSION` 推进权限改为仅主机可执行，前后端同步限制并补 ws 用例。 | `server/src/routes/ws/index.ts`、`client/src/App.tsx`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
+| BUG-018 | 2026-04-29 | 投票结果区域与弹窗显示被放逐玩家 ID（`p_xxx`），不显示昵称。 | 结果可读性 | `game:vote_result` 增加 `eliminatedName`，前端面板与 Modal 优先展示昵称。 | `server/src/routes/ws/index.ts`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/pages/day-page.tsx`、`client/src/components/vote-result-modal.tsx` | Fixed | 待你复测 |
+| BUG-019 | 2026-04-29 | `DAY_VOTE_RESULT` 阶段应仅主机可推进。 | 白天流程控制 | `DAY_VOTE_RESULT` 推进权限改为仅主机可执行，前后端同步限制并补 ws 用例。 | `server/src/routes/ws/index.ts`、`client/src/App.tsx`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
+| BUG-020 | 2026-04-29 | 夜晚刀人阶段偶发出现已死亡玩家可选，并提交后报 `PLAYER_DEAD`。 | 夜晚目标一致性 | 前端夜晚提交前增加“目标仍在当前可选列表”校验，并移除 phase-change 的前端乐观 phase 覆盖，改为以 snapshot 为准，避免阶段切换瞬间的脏目标。 | `client/src/pages/night-page.tsx`、`client/src/hooks/use-realtime-game-client.ts` | Fixed | 待你复测 |
+| BUG-021 | 2026-04-30 | 预言家查验阶段出现“自己”作为可选目标。 | 夜晚目标合理性 | 前端 `NIGHT_SEER` 目标列表排除自己；后端新增禁止预言家查验自己校验（`INVALID_TARGET`）。 | `client/src/pages/night-page.tsx`、`server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
+| BUG-022 | 2026-04-30 | 女巫“第二夜及之后被刀不能自救”未在 UI 上体现。 | 女巫技能规则 | 服务端下发女巫当夜可用能力（`WITCH_OPTIONS`），当前端识别为“被刀且非首夜”时隐藏解药可选项；后端仍保留强校验。 | `server/src/routes/ws/index.ts`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/pages/night-page.tsx`、`server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
+| BUG-023 | 2026-04-30 | 女巫毒药可对自己生效（应全程禁止）。 | 女巫技能规则 | 前端毒药目标列表排除自己；后端新增禁止毒自己校验（`INVALID_TARGET`）。 | `client/src/pages/night-page.tsx`、`server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
+| BUG-024 | 2026-04-30 | 游戏结束后缺少“开始新的一局”入口，无法原班人马快速重开。 | 结束页与对局重开 | 结束页增加“开始新的一局”按钮（仅主机可点）；服务端允许 `ENDED` 状态下由主机重新发牌开局，并保留原玩家名单。 | `client/src/pages/end-page.tsx`、`client/src/App.tsx`、`server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
+| BUG-025 | 2026-04-30 | 女巫回合未明确告知“昨夜被刀玩家”，且缺少可回看记录。 | 女巫信息提示 | 服务端在 `NIGHT_WITCH` 私发 `WITCH_WOLF_TARGET`（目标昵称+回合）；前端女巫回合展示刀口提示，并新增“刀口记录”弹窗支持历史回看。 | `server/src/routes/ws/index.ts`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/pages/night-page.tsx`、`client/src/components/witch-kill-log-modal.tsx`、`client/src/App.tsx`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
+| BUG-026 | 2026-04-30 | 狼人夜晚行动阶段不能选择自己（需支持“自刀”）。 | 夜晚目标选择 | 前端 `NIGHT_WOLF` 目标列表允许包含自己（仅保留预言家/女巫毒药对自己的限制）；后端本身已允许。补充回归测试覆盖狼人自刀。 | `client/src/pages/night-page.tsx`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
+| BUG-027 | 2026-04-30 | `DAY_LAST_WORDS` 在全程无人死亡时仍出现，流程冗余。 | 白天流程推进 | `DAY_REVEAL` 推进时，若全局死亡记录为空则直接进入 `DAY_DISCUSSION`，跳过 `DAY_LAST_WORDS`。补充回归测试。 | `server/src/game/game-engine.ts`、`server/test/game/game-engine.test.ts` | Fixed | 待你复测 |
+| BUG-028 | 2026-04-30 | 死亡玩家在夜晚仍显示技能按钮并可点击（虽然后端拦截）。 | 夜晚交互与权限 | 前端夜晚页面按存活态控制：死亡玩家显示“已死亡不可操作”；若死亡玩家是主机，仅保留“主机推进到下一步”按钮；服务端补充限制：死亡且非主机不能通过 `player:confirm_role` 强行推进。 | `client/src/pages/night-page.tsx`、`client/src/App.tsx`、`server/src/routes/ws/index.ts`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
+| BUG-029 | 2026-04-30 | 平票后应进入“PK发言 -> 重新投票”，而不是直接入夜。 | 白天投票流程 | 新增 `DAY_PK_SPEECH` 阶段；首轮平票先进入 PK 发言，再进入 `DAY_REVOTE`；复投仅允许对平票玩家投票；复投仍平票则无人出局入夜。前端新增 PK 阶段展示与复投候选限制。 | `server/src/game/constants/game-phases.ts`、`server/src/game/game-engine.ts`、`server/src/routes/ws/index.ts`、`client/src/hooks/use-realtime-game-client.ts`、`client/src/pages/day-page.tsx`、`client/src/App.tsx`、`server/test/game/game-engine.test.ts`、`server/test/routes/ws.test.ts` | Fixed | 待你复测 |
 
 ## 复测记录（手工填写）
 
@@ -42,3 +55,16 @@
 | BUG-014 |  |  |  |  |
 | BUG-015 |  |  |  |  |
 | BUG-016 |  |  |  |  |
+| BUG-017 |  |  |  |  |
+| BUG-018 |  |  |  |  |
+| BUG-019 |  |  |  |  |
+| BUG-020 |  |  |  |  |
+| BUG-021 |  |  |  |  |
+| BUG-022 |  |  |  |  |
+| BUG-023 |  |  |  |  |
+| BUG-024 |  |  |  |  |
+| BUG-025 |  |  |  |  |
+| BUG-026 |  |  |  |  |
+| BUG-027 |  |  |  |  |
+| BUG-028 |  |  |  |  |
+| BUG-029 |  |  |  |  |

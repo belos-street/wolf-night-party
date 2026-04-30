@@ -13,7 +13,7 @@ export const VoteResultModal = ({ open, result, onClose }: VoteResultModalProps)
 
   const summary = result.isTie
     ? '本轮平票，无人出局。'
-    : `出局玩家：${result.eliminatedId ?? '无人'}`
+    : `出局玩家：${result.eliminatedName ?? result.eliminatedId ?? '无人'}`
 
   return (
     <div className="modal-mask" role="presentation" onClick={onClose}>

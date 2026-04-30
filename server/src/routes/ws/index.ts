@@ -278,6 +278,81 @@ const buildWolfSyncPayload = (): Record<string, unknown> | null => {
   }
 }
 
+const resolveWolfTargetIdFromState = (): string | null => {
+  const roomState = getRoomState()
+  const wolfVotes = roomState.nightActionState?.wolfVotes
+
+  if (!wolfVotes) {
+    return null
+  }
+
+  const targetIds = Object.values(wolfVotes)
+
+  if (targetIds.length === 0) {
+    return null
+  }
+
+  const uniqueTargets = new Set(targetIds)
+  return uniqueTargets.size === 1 ? targetIds[0] : null
+}
+
+const buildWitchOptionsPayload = (
+  witchPlayerId: string
+): Record<string, unknown> | null => {
+  const roomState = getRoomState()
+  const witch = roomState.players.find((player) => player.id === witchPlayerId)
+
+  if (!witch || witch.role !== 'WITCH' || !witch.alive) {
+    return null
+  }
+
+  const wolfTargetId = resolveWolfTargetIdFromState()
+  const isSelfTargeted = wolfTargetId === witch.id
+  const canSave =
+    roomState.witchState.saveAvailable &&
+    Boolean(wolfTargetId) &&
+    !(isSelfTargeted && roomState.round > 1)
+
+  return {
+    title: 'WITCH_OPTIONS',
+    canSave,
+    canPoison: roomState.witchState.poisonAvailable,
+    isSelfTargeted,
+    round: roomState.round
+  }
+}
+
+const buildWitchWolfTargetPayload = (
+  witchPlayerId: string
+): Record<string, unknown> | null => {
+  const roomState = getRoomState()
+  const witch = roomState.players.find((player) => player.id === witchPlayerId)
+
+  if (!witch || witch.role !== 'WITCH' || !witch.alive) {
+    return null
+  }
+
+  const wolfTargetId = resolveWolfTargetIdFromState()
+
+  if (!wolfTargetId) {
+    return null
+  }
+
+  const wolfTarget = roomState.players.find((player) => player.id === wolfTargetId)
+
+  if (!wolfTarget) {
+    return null
+  }
+
+  return {
+    title: 'WITCH_WOLF_TARGET',
+    targetId: wolfTarget.id,
+    targetName: wolfTarget.nickname,
+    round: roomState.round,
+    receivedAt: Date.now()
+  }
+}
+
 const resolveErrorDescriptor = (error: unknown) => {
   if (error instanceof ZodError) {
     return {
@@ -450,11 +525,32 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
     eventContext: StateDrivenEventContext
   ) => {
     const roomState = getRoomState()
+    const pkCandidates =
+      (roomState.phase === 'DAY_PK_SPEECH' || roomState.phase === 'DAY_REVOTE') &&
+      roomState.voteActionState
+        ? roomState.voteActionState.candidates
+            .map((candidateId) => {
+              const candidate = roomState.players.find((player) => player.id === candidateId)
+
+              if (!candidate || !candidate.alive) {
+                return null
+              }
+
+              return {
+                playerId: candidate.id,
+                playerName: candidate.nickname
+              }
+            })
+            .filter(
+              (item): item is { playerId: string; playerName: string } => item !== null
+            )
+        : []
 
     broadcast(SERVER_WS_EVENTS.gamePhaseChange, {
       phase: roomState.phase,
       receivedEvent: eventContext.event,
-      requestId: eventContext.requestId ?? null
+      requestId: eventContext.requestId ?? null,
+      pkCandidates
     })
 
     if (roomState.deadPlayers.length > before.deadCount) {
@@ -474,6 +570,12 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
     const nextVoteSignature = buildVoteSignature(roomState.lastVoteResult)
 
     if (roomState.lastVoteResult && nextVoteSignature !== before.voteSignature) {
+      const eliminatedName = roomState.lastVoteResult.eliminatedId
+        ? roomState.players.find(
+            (player) => player.id === roomState.lastVoteResult?.eliminatedId
+          )?.nickname ?? null
+        : null
+
       const voteDetails = Object.entries(roomState.lastVoteBallots ?? {}).map(
         ([voterId, targetId]) => {
           const voter = roomState.players.find((player) => player.id === voterId)
@@ -493,6 +595,7 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
       broadcast(SERVER_WS_EVENTS.gameVoteResult, {
         eliminatedId: roomState.lastVoteResult.eliminatedId,
+        eliminatedName,
         isTie: roomState.lastVoteResult.isTie,
         roundNo: roomState.lastVoteResult.roundNo,
         ballots: voteDetails
@@ -510,6 +613,31 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
         sendEvent(hunterSocket, SERVER_WS_EVENTS.gameHunterSkill, {
           canShoot: true
         })
+      }
+    }
+
+    if (roomState.phase === 'NIGHT_WITCH') {
+      const witch = roomState.players.find((player) => {
+        return player.role === 'WITCH' && player.alive
+      })
+
+      if (witch) {
+        const witchSocket = socketsByPlayerId.get(witch.id)
+        const witchOptionsPayload = buildWitchOptionsPayload(witch.id)
+
+        if (witchSocket && witchOptionsPayload) {
+          sendEvent(witchSocket, SERVER_WS_EVENTS.gameNightAction, witchOptionsPayload)
+        }
+
+        const witchWolfTargetPayload = buildWitchWolfTargetPayload(witch.id)
+
+        if (witchSocket && witchWolfTargetPayload) {
+          sendEvent(
+            witchSocket,
+            SERVER_WS_EVENTS.gameNightAction,
+            witchWolfTargetPayload
+          )
+        }
       }
     }
 
@@ -556,6 +684,7 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (
         roomState.phase === 'DAY_REVEAL' ||
+        roomState.phase === 'DAY_PK_SPEECH' ||
         roomState.phase === 'DAY_LAST_WORDS' ||
         roomState.phase === 'DAY_DISCUSSION' ||
         roomState.phase === 'DAY_VOTE_RESULT' ||
@@ -563,7 +692,10 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
       ) {
         if (
           (roomState.phase === 'DAY_REVEAL' ||
-            roomState.phase === 'DAY_LAST_WORDS') &&
+            roomState.phase === 'DAY_PK_SPEECH' ||
+            roomState.phase === 'DAY_LAST_WORDS' ||
+            roomState.phase === 'DAY_DISCUSSION' ||
+            roomState.phase === 'DAY_VOTE_RESULT') &&
           !currentPlayer.isHost
         ) {
           throw new Error('HOST_ONLY_ACTION')
@@ -583,6 +715,10 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
         roomState.phase === 'DAY_HUNTER_NIGHT' ||
         roomState.phase === 'DAY_HUNTER_VOTE'
       ) {
+        if (!currentPlayer.alive && !currentPlayer.isHost) {
+          throw new Error('PLAYER_DEAD')
+        }
+
         applyPhaseTimeoutInRoom()
         return
       }
@@ -727,6 +863,19 @@ const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
         if (roomState.status !== 'WAITING') {
           sendEvent(wsSocket, SERVER_WS_EVENTS.gameRoleAssigned, roleInfo)
+        }
+
+        if (roomState.phase === 'NIGHT_WITCH' && roleInfo.role === 'WITCH') {
+          const witchOptionsPayload = buildWitchOptionsPayload(playerId)
+          const witchWolfTargetPayload = buildWitchWolfTargetPayload(playerId)
+
+          if (witchOptionsPayload) {
+            sendEvent(wsSocket, SERVER_WS_EVENTS.gameNightAction, witchOptionsPayload)
+          }
+
+          if (witchWolfTargetPayload) {
+            sendEvent(wsSocket, SERVER_WS_EVENTS.gameNightAction, witchWolfTargetPayload)
+          }
         }
       } catch {
         request.log.debug({ playerId }, 'role info is not ready yet')

@@ -17,8 +17,11 @@ import type {
   GameSnapshot,
   MainView,
   PlayerPublicSnapshot,
+  RevoteCandidate,
   RoleInfo,
   SeerCheckRecord,
+  WitchKillHintRecord,
+  WitchOptions,
   WolfVoteHint,
   VoteResultInfo
 } from '../types/game-ui'
@@ -155,10 +158,15 @@ const parseVoteResult = (
   payload: Record<string, unknown>
 ): VoteResultInfo | null => {
   const eliminatedIdRaw = payload.eliminatedId
+  const eliminatedNameRaw = payload.eliminatedName
   const isTie = payload.isTie === true
   const roundNoRaw = payload.roundNo
 
   if (eliminatedIdRaw !== null && typeof eliminatedIdRaw !== 'string') {
+    return null
+  }
+
+  if (eliminatedNameRaw !== null && typeof eliminatedNameRaw !== 'string') {
     return null
   }
 
@@ -202,6 +210,7 @@ const parseVoteResult = (
 
   return {
     eliminatedId: eliminatedIdRaw ?? null,
+    eliminatedName: eliminatedNameRaw ?? null,
     isTie,
     roundNo: roundNoRaw,
     ballots
@@ -317,6 +326,81 @@ const parseWolfVoteHints = (payload: Record<string, unknown>): WolfVoteHint[] | 
   return hints
 }
 
+const parseWitchOptions = (payload: Record<string, unknown>): WitchOptions | null => {
+  const title = readString(payload.title)
+
+  if (title !== 'WITCH_OPTIONS') {
+    return null
+  }
+
+  const round = readNumber(payload.round)
+
+  if (round === null) {
+    return null
+  }
+
+  return {
+    canSave: payload.canSave === true,
+    canPoison: payload.canPoison === true,
+    isSelfTargeted: payload.isSelfTargeted === true,
+    round
+  }
+}
+
+const parseWitchKillHint = (
+  payload: Record<string, unknown>
+): WitchKillHintRecord | null => {
+  const title = readString(payload.title)
+
+  if (title !== 'WITCH_WOLF_TARGET') {
+    return null
+  }
+
+  const targetId = readString(payload.targetId)
+  const targetName = readString(payload.targetName)
+  const round = readNumber(payload.round)
+  const receivedAt = readNumber(payload.receivedAt) ?? Date.now()
+
+  if (!targetId || !targetName || round === null) {
+    return null
+  }
+
+  return {
+    targetId,
+    targetName,
+    round,
+    receivedAt
+  }
+}
+
+const parseRevoteCandidates = (
+  payload: Record<string, unknown>
+): RevoteCandidate[] => {
+  if (!Array.isArray(payload.pkCandidates)) {
+    return []
+  }
+
+  return payload.pkCandidates
+    .map((rawCandidate) => {
+      if (!isRecord(rawCandidate)) {
+        return null
+      }
+
+      const playerId = readString(rawCandidate.playerId)
+      const playerName = readString(rawCandidate.playerName)
+
+      if (!playerId || !playerName) {
+        return null
+      }
+
+      return {
+        playerId,
+        playerName
+      }
+    })
+    .filter((item): item is RevoteCandidate => item !== null)
+}
+
 type ParsedServerEvent = {
   event: string
   payload: Record<string, unknown>
@@ -430,10 +514,15 @@ export const useRealtimeGameClient = (
   })
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null)
   const [roleInfo, setRoleInfo] = useState<RoleInfo | null>(null)
+  const [witchOptions, setWitchOptions] = useState<WitchOptions | null>(null)
   const [seerChecks, setSeerChecks] = useState<SeerCheckRecord[]>([])
   const [wolfVoteHints, setWolfVoteHints] = useState<WolfVoteHint[]>([])
+  const [witchKillHints, setWitchKillHints] = useState<WitchKillHintRecord[]>([])
+  const [revoteCandidates, setRevoteCandidates] = useState<RevoteCandidate[]>([])
   const [pendingSeerResult, setPendingSeerResult] =
     useState<SeerCheckRecord | null>(null)
+  const [pendingWitchKillHint, setPendingWitchKillHint] =
+    useState<WitchKillHintRecord | null>(null)
   const [dayDeaths, setDayDeaths] = useState<DayDeath[]>([])
   const [voteResult, setVoteResult] = useState<VoteResultInfo | null>(null)
   const [voteCountdownSec, setVoteCountdownSec] = useState<number | null>(null)
@@ -478,6 +567,10 @@ export const useRealtimeGameClient = (
     setPendingSeerResult(null)
   }, [])
 
+  const dismissWitchKillHint = useCallback(() => {
+    setPendingWitchKillHint(null)
+  }, [])
+
   const disposeSocket = useCallback(() => {
     const currentSocket = socketRef.current
 
@@ -497,9 +590,13 @@ export const useRealtimeGameClient = (
     setSession(null)
     setSnapshot(null)
     setRoleInfo(null)
+    setWitchOptions(null)
     setSeerChecks([])
     setWolfVoteHints([])
+    setWitchKillHints([])
+    setRevoteCandidates([])
     setPendingSeerResult(null)
+    setPendingWitchKillHint(null)
     setDayDeaths([])
     setVoteResult(null)
     setVoteCountdownSec(null)
@@ -565,6 +662,8 @@ export const useRealtimeGameClient = (
         const summary = readString(payload.summary)
         const seerResult = parseSeerCheckRecord(payload)
         const wolfSyncHints = parseWolfVoteHints(payload)
+        const nextWitchOptions = parseWitchOptions(payload)
+        const witchKillHint = parseWitchKillHint(payload)
 
         if (seerResult) {
           setSeerChecks((current) => {
@@ -588,6 +687,24 @@ export const useRealtimeGameClient = (
 
         if (wolfSyncHints) {
           setWolfVoteHints(wolfSyncHints)
+          return
+        }
+
+        if (nextWitchOptions) {
+          setWitchOptions(nextWitchOptions)
+          return
+        }
+
+        if (witchKillHint) {
+          setWitchKillHints((current) => {
+            const withoutCurrentRound = current.filter((item) => {
+              return item.round !== witchKillHint.round
+            })
+
+            return [witchKillHint, ...withoutCurrentRound]
+          })
+          setPendingWitchKillHint(witchKillHint)
+          setInfoMessage(`女巫提示：昨夜被刀的是 ${witchKillHint.targetName}。`)
           return
         }
 
@@ -649,24 +766,32 @@ export const useRealtimeGameClient = (
       }
 
       if (serverEvent.event === SERVER_WS_EVENTS.gamePhaseChange) {
-        const phase = readString(payload.phase)
         const receivedEvent = readString(payload.receivedEvent)
 
-        if (phase) {
-          setSnapshot((current) => {
-            if (!current) {
-              return current
-            }
-
-            return {
-              ...current,
-              phase
-            }
-          })
+        if (receivedEvent === CLIENT_WS_EVENTS.gameStart) {
+          setWitchOptions(null)
+          setSeerChecks([])
+          setWolfVoteHints([])
+          setWitchKillHints([])
+          setRevoteCandidates([])
+          setPendingSeerResult(null)
+          setPendingWitchKillHint(null)
+          setDayDeaths([])
+          setVoteResult(null)
+          setVoteCountdownSec(null)
+          setGameOverInfo(null)
         }
 
         if (receivedEvent) {
           setInfoMessage(`已提交动作：${receivedEvent}`)
+        }
+
+        const phase = readString(payload.phase)
+
+        if (phase === 'DAY_PK_SPEECH' || phase === 'DAY_REVOTE') {
+          setRevoteCandidates(parseRevoteCandidates(payload))
+        } else {
+          setRevoteCandidates([])
         }
         return
       }
@@ -809,7 +934,10 @@ export const useRealtimeGameClient = (
         setJoinRejectedByRunning(false)
         setSeerChecks([])
         setWolfVoteHints([])
+        setWitchKillHints([])
+        setRevoteCandidates([])
         setPendingSeerResult(null)
+        setPendingWitchKillHint(null)
         setDayDeaths([])
         setVoteResult(null)
         setGameOverInfo(null)
@@ -956,6 +1084,22 @@ export const useRealtimeGameClient = (
   }, [snapshot?.phase])
 
   useEffect(() => {
+    if (snapshot?.phase === 'NIGHT_WITCH') {
+      return
+    }
+
+    setWitchOptions(null)
+  }, [snapshot?.phase])
+
+  useEffect(() => {
+    if (snapshot?.phase === 'DAY_PK_SPEECH' || snapshot?.phase === 'DAY_REVOTE') {
+      return
+    }
+
+    setRevoteCandidates([])
+  }, [snapshot?.phase])
+
+  useEffect(() => {
     if (snapshot?.phase === 'DAY_VOTE' || snapshot?.phase === 'DAY_REVOTE') {
       return
     }
@@ -1006,9 +1150,13 @@ export const useRealtimeGameClient = (
     session,
     snapshot,
     roleInfo,
+    witchOptions,
     seerChecks,
     wolfVoteHints,
+    witchKillHints,
+    revoteCandidates,
     pendingSeerResult,
+    pendingWitchKillHint,
     dayDeaths,
     voteResult,
     voteCountdownSec,
@@ -1021,6 +1169,7 @@ export const useRealtimeGameClient = (
     currentView,
     clearErrorMessage,
     dismissSeerResult,
+    dismissWitchKillHint,
     joinGame,
     manualReconnect,
     requestHelp,

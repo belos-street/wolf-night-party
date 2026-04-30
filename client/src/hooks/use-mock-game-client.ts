@@ -11,8 +11,11 @@ import type {
   GameSnapshot,
   MainView,
   PlayerPublicSnapshot,
+  RevoteCandidate,
   RoleInfo,
   SeerCheckRecord,
+  WitchKillHintRecord,
+  WitchOptions,
   WolfVoteHint,
   VoteResultInfo
 } from '../types/game-ui'
@@ -99,8 +102,13 @@ export const useMockGameClient = () => {
   const [roleInfo, setRoleInfo] = useState<RoleInfo | null>(null)
   const [seerChecks, setSeerChecks] = useState<SeerCheckRecord[]>([])
   const [wolfVoteHints, setWolfVoteHints] = useState<WolfVoteHint[]>([])
+  const [witchKillHints, setWitchKillHints] = useState<WitchKillHintRecord[]>([])
+  const [revoteCandidates] = useState<RevoteCandidate[]>([])
+  const [witchOptions] = useState<WitchOptions | null>(null)
   const [pendingSeerResult, setPendingSeerResult] =
     useState<SeerCheckRecord | null>(null)
+  const [pendingWitchKillHint, setPendingWitchKillHint] =
+    useState<WitchKillHintRecord | null>(null)
   const [dayDeaths, setDayDeaths] = useState<DayDeath[]>([])
   const [voteResult, setVoteResult] = useState<VoteResultInfo | null>(null)
   const [voteCountdownSec] = useState<number | null>(null)
@@ -125,6 +133,10 @@ export const useMockGameClient = () => {
     setPendingSeerResult(null)
   }, [])
 
+  const dismissWitchKillHint = useCallback(() => {
+    setPendingWitchKillHint(null)
+  }, [])
+
   const safeSetPhase = useCallback((phase: string) => {
     setSnapshot((current) => {
       if (!current) {
@@ -137,6 +149,32 @@ export const useMockGameClient = () => {
       }
     })
   }, [])
+
+  const publishMockWitchKillHint = useCallback(() => {
+    if (!wolfTargetRef.current || !snapshot) {
+      return
+    }
+
+    const target = snapshot.players.find((player) => player.id === wolfTargetRef.current)
+
+    if (!target) {
+      return
+    }
+
+    const nextHint: WitchKillHintRecord = {
+      targetId: target.id,
+      targetName: target.nickname,
+      round: dayRound,
+      receivedAt: Date.now()
+    }
+
+    setWitchKillHints((current) => {
+      const withoutCurrentRound = current.filter((item) => item.round !== nextHint.round)
+      return [nextHint, ...withoutCurrentRound]
+    })
+    setPendingWitchKillHint(nextHint)
+    setInfoMessage(`女巫提示：昨夜被刀的是 ${target.nickname}。`)
+  }, [dayRound, snapshot])
 
   const setEndGame = useCallback(
     (winner: 'GOOD' | 'WOLF', reason: string) => {
@@ -203,12 +241,32 @@ export const useMockGameClient = () => {
         }
       }
 
+      if (current.phase === 'NIGHT_GUARD' && wolfTargetRef.current) {
+        const target = current.players.find((player) => player.id === wolfTargetRef.current)
+
+        if (target) {
+          const nextHint: WitchKillHintRecord = {
+            targetId: target.id,
+            targetName: target.nickname,
+            round: dayRound,
+            receivedAt: Date.now()
+          }
+
+          setWitchKillHints((hints) => {
+            const withoutCurrentRound = hints.filter((item) => item.round !== nextHint.round)
+            return [nextHint, ...withoutCurrentRound]
+          })
+          setPendingWitchKillHint(nextHint)
+          setInfoMessage(`女巫提示：昨夜被刀的是 ${target.nickname}。`)
+        }
+      }
+
       return {
         ...current,
         phase: nextNightPhase(current.phase)
       }
     })
-  }, [session?.playerId])
+  }, [dayRound, session?.playerId])
 
   const autoAdvanceHunterPhase = useCallback(() => {
     setSnapshot((current) => {
@@ -332,12 +390,16 @@ export const useMockGameClient = () => {
       setRoleInfo(null)
       setSeerChecks([])
       setWolfVoteHints([])
+      setWitchKillHints([])
       setPendingSeerResult(null)
+      setPendingWitchKillHint(null)
       setDayDeaths([])
       setVoteResult(null)
       setGameOverInfo(null)
       setPendingDisconnects([])
       setConnectionStatus('CONNECTED')
+      setDayRound(1)
+      wolfTargetRef.current = null
       setInfoMessage('Mock 模式已启用：无需后端即可演示页面。')
     },
     []
@@ -373,9 +435,13 @@ export const useMockGameClient = () => {
     setRoleInfo(toRoleInfo(mockRole))
     setSeerChecks([])
     setWolfVoteHints([])
+    setWitchKillHints([])
     setPendingSeerResult(null)
+    setPendingWitchKillHint(null)
     setVoteResult(null)
     setDayDeaths([])
+    setDayRound(1)
+    wolfTargetRef.current = null
     setInfoMessage('Mock 模式：已开始游戏。')
   }, [mockRole])
 
@@ -469,11 +535,11 @@ export const useMockGameClient = () => {
   )
 
   const submitGuardProtect = useCallback(
-    (targetId: string) => {
+    (_targetId: string) => {
       safeSetPhase('NIGHT_WITCH')
-      setInfoMessage(`Mock 模式：守卫已守护 ${targetId}。`)
+      publishMockWitchKillHint()
     },
-    [safeSetPhase]
+    [publishMockWitchKillHint, safeSetPhase]
   )
 
   const submitWitchAction = useCallback(
@@ -524,6 +590,10 @@ export const useMockGameClient = () => {
 
       setVoteResult({
         eliminatedId: targetId === 'abstain' ? null : targetId,
+        eliminatedName:
+          targetId === 'abstain'
+            ? null
+            : snapshot?.players.find((player) => player.id === targetId)?.nickname ?? null,
         isTie: targetId === 'abstain',
         roundNo: 1,
         ballots: session
@@ -603,9 +673,13 @@ export const useMockGameClient = () => {
     session,
     snapshot,
     roleInfo,
+    witchOptions,
     seerChecks,
     wolfVoteHints,
+    witchKillHints,
+    revoteCandidates,
     pendingSeerResult,
+    pendingWitchKillHint,
     dayDeaths,
     voteResult,
     voteCountdownSec,
@@ -618,6 +692,7 @@ export const useMockGameClient = () => {
     currentView,
     clearErrorMessage,
     dismissSeerResult,
+    dismissWitchKillHint,
     joinGame,
     manualReconnect,
     requestHelp,

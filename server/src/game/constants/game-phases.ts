@@ -12,6 +12,7 @@ export const GAME_PHASES = {
   dayLastWords: 'DAY_LAST_WORDS',
   dayDiscussion: 'DAY_DISCUSSION',
   dayVote: 'DAY_VOTE',
+  dayPkSpeech: 'DAY_PK_SPEECH',
   dayRevote: 'DAY_REVOTE',
   dayVoteResult: 'DAY_VOTE_RESULT',
   dayIdiotReveal: 'DAY_IDIOT_REVEAL',

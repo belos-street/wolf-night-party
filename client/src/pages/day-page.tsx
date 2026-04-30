@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type {
   DayDeath,
   PlayerPublicSnapshot,
+  RevoteCandidate,
   RoleInfo,
   VoteResultInfo
 } from '../types/game-ui'
@@ -13,6 +14,7 @@ const dayPhaseTitleMap: Record<string, string> = {
   DAY_LAST_WORDS: '🎤 遗言阶段',
   DAY_DISCUSSION: '💬 讨论阶段',
   DAY_VOTE: '🗳️ 放逐投票',
+  DAY_PK_SPEECH: '🎙️ PK 发言',
   DAY_REVOTE: '⚖️ 平票重投',
   DAY_VOTE_RESULT: '📊 投票结果',
   DAY_IDIOT_REVEAL: '🤪 白痴翻牌',
@@ -26,6 +28,7 @@ interface DayPageProps {
   selfPlayerId: string
   deaths: DayDeath[]
   voteResult: VoteResultInfo | null
+  revoteCandidates: RevoteCandidate[]
   canSubmitVote: boolean
   voteCountdownSec: number | null
   canAdvancePhase: boolean
@@ -42,6 +45,7 @@ export const DayPage = ({
   selfPlayerId,
   deaths,
   voteResult,
+  revoteCandidates,
   canSubmitVote,
   voteCountdownSec,
   canAdvancePhase,
@@ -67,8 +71,18 @@ export const DayPage = ({
   }, [players, selfPlayerId])
 
   const voteTargets = useMemo(() => {
-    return players.filter((player) => player.alive && player.id !== selfPlayerId)
-  }, [players, selfPlayerId])
+    const aliveCandidates = players.filter((player) => player.alive && player.id !== selfPlayerId)
+
+    if (phase !== 'DAY_REVOTE' || revoteCandidates.length === 0) {
+      return aliveCandidates
+    }
+
+    const revoteCandidateIdSet = new Set(
+      revoteCandidates.map((candidate) => candidate.playerId)
+    )
+
+    return aliveCandidates.filter((player) => revoteCandidateIdSet.has(player.id))
+  }, [phase, players, revoteCandidates, selfPlayerId])
   const playerNameById = useMemo(() => {
     return new Map(players.map((player) => [player.id, player.nickname]))
   }, [players])
@@ -77,6 +91,7 @@ export const DayPage = ({
   const canSubmitHunterShot = isHunterPhase && isSelfHunter
   const isAdvanceOnlyPhase =
     phase === 'DAY_REVEAL' ||
+    phase === 'DAY_PK_SPEECH' ||
     phase === 'DAY_LAST_WORDS' ||
     phase === 'DAY_DISCUSSION' ||
     phase === 'DAY_VOTE_RESULT' ||
@@ -84,6 +99,7 @@ export const DayPage = ({
 
   const advanceLabelMap: Record<string, string> = {
     DAY_REVEAL: '进入下一阶段',
+    DAY_PK_SPEECH: 'PK 发言结束，进入重新投票',
     DAY_LAST_WORDS: '遗言结束，继续',
     DAY_DISCUSSION: '讨论结束，进入投票',
     DAY_VOTE_RESULT: '公布完毕，进入下一夜',
@@ -113,6 +129,13 @@ export const DayPage = ({
       {isAdvanceOnlyPhase ? (
         <article className="panel stack">
           <h3 className="panel-title">阶段推进</h3>
+          {phase === 'DAY_PK_SPEECH' ? (
+            <ul className="rule-list">
+              {revoteCandidates.map((candidate) => (
+                <li key={candidate.playerId}>{candidate.playerName}</li>
+              ))}
+            </ul>
+          ) : null}
           <p className="muted">
             当前阶段为流程确认阶段，点击按钮后将由服务端推进。
           </p>
@@ -226,7 +249,9 @@ export const DayPage = ({
           <p>
             {voteResult.isTie
               ? '本轮平票，无人被放逐。'
-              : `被放逐玩家：${voteResult.eliminatedId ?? '无'}`}
+              : `被放逐玩家：${
+                  voteResult.eliminatedName ?? voteResult.eliminatedId ?? '无'
+                }`}
           </p>
         </article>
       ) : null}

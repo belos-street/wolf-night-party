@@ -40,6 +40,13 @@ export interface RoleInfo {
   description: string
 }
 
+export interface WitchOptions {
+  canSave: boolean
+  canPoison: boolean
+  isSelfTargeted: boolean
+  round: number
+}
+
 export interface SeerCheckRecord {
   targetId: string
   targetName: string
@@ -55,6 +62,18 @@ export interface WolfVoteHint {
   targetName: string
 }
 
+export interface WitchKillHintRecord {
+  targetId: string
+  targetName: string
+  round: number
+  receivedAt: number
+}
+
+export interface RevoteCandidate {
+  playerId: string
+  playerName: string
+}
+
 export interface DisconnectNotice {
   playerId: string
   countdownSec: number
@@ -68,6 +87,7 @@ export interface DayDeath {
 
 export interface VoteResultInfo {
   eliminatedId: string | null
+  eliminatedName: string | null
   isTie: boolean
   roundNo: 1 | 2
   ballots: VoteBallotInfo[]
@@ -95,8 +115,11 @@ export interface GameClientData {
   session: JoinResponse | null
   snapshot: GameSnapshot | null
   roleInfo: RoleInfo | null
+  witchOptions: WitchOptions | null
   seerChecks: SeerCheckRecord[]
   wolfVoteHints: WolfVoteHint[]
+  witchKillHints: WitchKillHintRecord[]
+  revoteCandidates: RevoteCandidate[]
   dayDeaths: DayDeath[]
   voteResult: VoteResultInfo | null
   voteCountdownSec: number | null

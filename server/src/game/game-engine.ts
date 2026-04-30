@@ -378,7 +378,13 @@ const finalizeVoteRound = (state: InternalRoomState) => {
               return validateAlivePlayer(state, candidateId).alive
             })
 
-      startVoteRound(state, 2, revoteCandidates)
+      state.voteActionState = {
+        roundNo: 2,
+        candidates: revoteCandidates,
+        ballots: {}
+      }
+      state.lastVoteBallots = null
+      setPhase(state, GAME_PHASES.dayPkSpeech)
       return
     }
 
@@ -478,13 +484,15 @@ export const startGame = (
   hostPlayerId: string,
   randomFn: () => number = Math.random
 ) => {
-  ensureGameNotEnded(state)
-
-  if (state.status !== GAME_STATUS.waiting) {
+  if (state.status === GAME_STATUS.running) {
     throw new Error('GAME_ALREADY_STARTED')
   }
 
-  const hostPlayer = validateAlivePlayer(state, hostPlayerId)
+  if (state.status !== GAME_STATUS.waiting && state.status !== GAME_STATUS.ended) {
+    throw new Error('PHASE_MISMATCH')
+  }
+
+  const hostPlayer = getPlayerById(state, hostPlayerId)
 
   if (!hostPlayer.isHost) {
     throw new Error('HOST_ONLY_ACTION')
@@ -618,6 +626,10 @@ export const submitSeerCheck = (
     throw new Error('NOT_YOUR_TURN')
   }
 
+  if (targetId === seer.id) {
+    throw new Error('INVALID_TARGET')
+  }
+
   validateAlivePlayer(state, targetId)
 
   state.nightActionState.seerTargetId = targetId
@@ -689,6 +701,10 @@ export const submitWitchAction = (
       throw new Error('INVALID_ACTION')
     }
 
+    if (targetId === witch.id) {
+      throw new Error('INVALID_TARGET')
+    }
+
     validateAlivePlayer(state, targetId)
   }
 
@@ -707,7 +723,25 @@ export const advanceDayPhase = (state: InternalRoomState) => {
       return
     }
 
+    // If nobody has died so far in the game, skip last words directly.
+    if (state.deadPlayers.length === 0) {
+      setPhase(state, GAME_PHASES.dayDiscussion)
+      return
+    }
+
     setPhase(state, GAME_PHASES.dayLastWords)
+    return
+  }
+
+  if (state.phase === GAME_PHASES.dayPkSpeech) {
+    setPhase(state, GAME_PHASES.dayRevote)
+
+    const aliveVoters = state.players.filter((player) => player.alive && player.canVote)
+
+    if (aliveVoters.length === 0) {
+      finalizeVoteRound(state)
+    }
+
     return
   }
 
@@ -867,6 +901,11 @@ export const applyPhaseTimeout = (state: InternalRoomState) => {
     }
 
     resolveNight(state)
+    return
+  }
+
+  if (state.phase === GAME_PHASES.dayPkSpeech) {
+    advanceDayPhase(state)
     return
   }
 
